@@ -89,7 +89,7 @@ class Verifier(object):
             url_end = ".json"
 
         helios_log("Downloading ballots...")
-        for uuid,voter in tqdm(self.voters.items(),disable=not verbose):
+        for uuid,voter in tqdm(self.voters.items(),disable=not verbose,unit=' voters'):
             addr = ballots_url + "/" + uuid + url_end
             ballot = fetch_json(addr)
             self.ballots[voter.uuid] = helios.Ballot(ballot)
@@ -196,5 +196,16 @@ if __name__ == "__main__":
 
     verifier = Verifier(args.uuid, args.host)
     verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
+    """
+    for k,ballot in verifier.ballots.items():
+        if ballot.vote is not None:
+            vote = ballot.vote
+            for answer in vote.answers:
+                test = answer.verify_answer(verifier.election.public_key)
+                if test is True:
+                    helios_log("SUCCESS")
+                else:
+                    helios_log("FAILED")
+    """
     #print(verifier.election.public_key.p,type(verifier.election.public_key.p))
     verifier.save_all(args.path)

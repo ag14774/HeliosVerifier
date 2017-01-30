@@ -1,5 +1,6 @@
 
 import json
+import crypto
 
 def helios_log(out, verbose=True):
     if verbose is True:
@@ -228,8 +229,28 @@ class EncryptedAnswer(HeliosObject):
     def __init__(self, dct):
         super().__init__(dct)
 
-    def verify_answer(self, public_key, question_max):
-        pass
+    def verify_answer(self, public_key, question_max=None):
+        homomorphic_prod = 1
+
+        for choice_num,choice in enumerate(self.choices):
+            dcpproof = self.individual_proofs[choice_num]
+
+            if not dcpproof.verify_proof(public_key, choice, 1):
+                return False
+
+            if question_max is not None:
+                homomorphic_prod = choice * homomorphic_prod
+
+        try:
+            if not self.overall_proof.verify_proof(public_key, homomorphic_prod, question_max):
+                return False
+        except AttributeError:
+            if question_max is not None:
+                helios_log("WARNING: 'question_max' is set but overall proof is missing!!!")
+                return False
+
+        return True
+
 
 class ElGamalCiphertext(HeliosObject):
 
@@ -237,9 +258,19 @@ class ElGamalCiphertext(HeliosObject):
     JSON_NAME = "choices"
 
     def __init__(self, dct):
-        super().__init__(dct)
-        self.alpha = int(self.alpha)
-        self.beta = int(self.beta)
+        # super().__init__(dct)
+        self.alpha = int(dct["alpha"])
+        self.beta = int(dct["beta"])
+
+    def __mul__(self, other):
+        if other == 0 or other == 1:
+            alpha = self.alpha
+            beta = self.beta
+        else:
+            alpha = self.alpha * other.alpha
+            beta = self.beta * other.beta
+        return ElGamalCiphertext({"alpha": alpha, "beta": beta})
+
 
     def toJSONDict(self):
         return {"alpha": str(self.alpha), "beta": str(self.beta)}
@@ -285,11 +316,14 @@ class HeliosDCPProof(HeliosObject):
     def toJSONDict(self):
         return [proof.toJSONDict() for proof in self.proofs]
 
-    def verify_proof(self, public_key, ciphertext):
+    def verify_proof(self, public_key, ciphertext, max_allowed):
         g = public_key.g
         p = public_key.p
         str_to_hash = ""
         computed_challenge = 0
+
+        if len(self.proofs) != (max_allowed+1):
+            return False
 
         for v,proof in enumerate(self.proofs):
             g_v = pow(g, v, p)
@@ -303,7 +337,7 @@ class HeliosDCPProof(HeliosObject):
             # Check each proof
             if not proof.verify_proof(public_key, g_v, ciphertext):
                 return False
-
+        computed_challenge = computed_challenge % public_key.q
         str_to_hash = str_to_hash.rstrip(",")
 
         # Compute expected challenge
