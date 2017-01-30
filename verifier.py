@@ -4,6 +4,7 @@ from heliosobjects import helios_log
 import requests
 import os
 import sys
+import json
 from tqdm import tqdm
 
 
@@ -13,12 +14,15 @@ def fetch_json(url):
         response = requests.get(url)
         response.raise_for_status()
     # FIXME: maybe do not handle here? temporary
+    except requests.exceptions.MissingSchema:
+        with open(url) as json_file:
+            return json.load(json_file)
     except requests.exceptions.HTTPError as err:
         print (err)
         sys.exit(1)
     result = response.json()
     return result
-    
+
 
 class Verifier(object):
     def __init__(self, uuid, host="https://vote.heliosvoting.org/helios"):
@@ -31,8 +35,11 @@ class Verifier(object):
         self.ballots = {}
 
 
-    def download_election_info(self, verbose=False):
-        election_url = self.host + "/elections/" + self.uuid
+    def fetch_election_info(self, verbose=False, path=None, force_download=False):
+        if path is None or force_download is True:
+            election_url = self.host + "/elections/" + self.uuid
+        else:
+            election_url = path
 
         helios_log("Downloading election data...", verbose)
         election_dct = fetch_json(election_url)
@@ -40,15 +47,24 @@ class Verifier(object):
 
         return self.election
 
-    def download_voters_info(self, verbose=False):
-        voters_url = self.host + "/elections/" + self.uuid + "/voters"
+    def fetch_voters_info(self, verbose=False, path=None, force_download=False):
+        if path is None or force_download is True:
+            voters_url = self.host + "/elections/" + self.uuid + "/voters"
+        else:
+            voters_url = path
 
         helios_log("Downloading voters info...", verbose)
 
         temp_voters = []
         after = ""
         while True:
-            temp = fetch_json(voters_url+"?after="+after+"&limit=200")
+            # If reading from file
+            if voters_url==path:
+                temp = fetch_json(voters_url)
+                temp_voters += temp
+                break
+            else:
+                temp = fetch_json(voters_url+"?after="+after+"&limit=200")
             if not temp:
                 break
             temp_voters += temp
@@ -64,17 +80,50 @@ class Verifier(object):
             self.voters[voter_uuid] = helios.CreateVoter(voter)
             # FIXME: Maybe compare use_voter_aliases with voter type here?
 
-    def download_ballots_info(self, verbose=False):
-        ballots_url = self.host + "/elections/" + self.uuid + "/ballots"
+    def fetch_ballots_info(self, verbose=False, path=None, force_download=False):
+        if path is None or force_download is True:
+            ballots_url = self.host + "/elections/" + self.uuid + "/ballots"
+            url_end = "/last"
+        else:
+            ballots_url = path
+            url_end = ".json"
+
         helios_log("Downloading ballots...")
-        short_ballots = fetch_json(ballots_url)
         for uuid,voter in tqdm(self.voters.items(),disable=not verbose):
-            addr = ballots_url + "/" + uuid + "/last"
+            addr = ballots_url + "/" + uuid + url_end
             ballot = fetch_json(addr)
             self.ballots[voter.uuid] = helios.Ballot(ballot)
 
+
+    def fetch_short_ballots_info(self, verbose=False, path=None, force_download=False):
+        if path is None or force_download is True:
+            ballots_url = self.host + "/elections/" + self.uuid + "/ballots"
+        else:
+            ballots_url = path
+
+        #helios_log("Downloading ballots...")
+        short_ballots = fetch_json(ballots_url)
+
         for short_ballot in short_ballots:
             self.short_ballots[short_ballot["voter_uuid"]] = helios.Ballot(short_ballot)
+
+    def fetch_all_election_data(self, verbose=False, path=None, force_download=False):
+        election_path = None
+        voters_path = None
+        short_ballots_path = None
+        ballots_path = None
+
+        if path is not None and force_download is False:
+            path = path.rstrip("/")
+            election_path = path + "/election_info.json"
+            voters_path = path + "/voters.json"
+            short_ballots_path = path + "/ballots.json"
+            ballots_path = path + "/ballots"
+
+        self.fetch_election_info(verbose, election_path, force_download)
+        self.fetch_voters_info(verbose, voters_path, force_download)
+        self.fetch_short_ballots_info(verbose, short_ballots_path, force_download)
+        self.fetch_ballots_info(verbose, ballots_path, force_download)
 
     def save_election_info(self, path):
         """Serialise 'self.election' and save to file"""
@@ -141,12 +190,11 @@ if __name__ == "__main__":
                         action='store', help='Helios server')
     parser.add_argument('--uuid', type=str, action='store', help='election identifier')
     parser.add_argument('--verbose', action='store_true', help='show progress on screen')
+    parser.add_argument('--force-download', action='store_true', help='force download data from the internet')
     parser.add_argument('--path', type=str, default=None, action='store', help='location to store files')
     args = parser.parse_args()
 
     verifier = Verifier(args.uuid, args.host)
-    verifier.download_election_info(args.verbose)
-    verifier.download_voters_info(args.verbose)
-    verifier.download_ballots_info(args.verbose)
-    print(verifier.election.public_key.p,type(verifier.election.public_key.p))
+    verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
+    #print(verifier.election.public_key.p,type(verifier.election.public_key.p))
     verifier.save_all(args.path)

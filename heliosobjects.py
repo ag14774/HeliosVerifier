@@ -1,6 +1,5 @@
 
 import json
-import crypto
 
 def helios_log(out, verbose=True):
     if verbose is True:
@@ -18,7 +17,11 @@ def all_subclasses(cls, keyattr="__name__"):
         try:
             key = getattr(sub, keyattr)
             if key!=None:
-                out[key] = sub
+                if type(key)==list:
+                    for k in key:
+                        out[k] = sub
+                else:
+                    out[key] = sub
         except Exception:
             pass
     for sub in temp:
@@ -69,7 +72,7 @@ class HeliosObject(object):
             constructor = HeliosObject.__subdict[arg]
             # If dct is a list instead of a dictionary then recursively execute_init
             if(type(dct) == list):
-                return [execute_init(arg, x) for x in dct]
+                return [constructor(x) for x in dct]
             else:
                 return constructor(dct)
         except Exception:
@@ -96,42 +99,49 @@ class HeliosObject(object):
         return out
 
     def toJSONDict(self):
-        if isinstance(self, HeliosObject):
-            fields = []
-            for field in self.FIELDS:
-                if type(field) == tuple:
-                    for t in field:
-                        fields.append(t)
-                else:
-                    fields.append(field)
-            out = {}
-            for field in fields:
-                try:
-                    temp = getattr(self, field)
-                    if isinstance(temp, HeliosObject):
-                        out[field] = temp.toJSONDict()
-                    else:
-                        out[field] = HeliosObject.toJSONDict(temp)
-                except AttributeError:
-                    pass
-                except Exception: # It will never get here
-                    helios_log("CRITICAL ERROR!!!")
-            return out
-        elif type(self) == list:
-            return [HeliosObject.toJSONDict(x) for x in self]
+        fields = []
+        for field in self.FIELDS:
+            if type(field) == tuple:
+                for t in field:
+                    fields.append(t)
+            else:
+                fields.append(field)
+        out = {}
+        for field in fields:
+            try:
+                temp = getattr(self, field)
+                out[field] = HeliosObject.__toJSONDict(temp)
+            except AttributeError:
+                pass
+            except Exception: # It will never get here
+                helios_log("CRITICAL ERROR!!!")
+        return out
+
+    @staticmethod
+    def __toJSONDict(obj):
+        if isinstance(obj, HeliosObject):
+            return obj.toJSONDict()
+        elif type(obj) == list:
+            return [HeliosObject.__toJSONDict(x) for x in obj]
         else:
-            return self
+            return obj
+
 
 ################################################################################
 
-class ElectionPK(HeliosObject, crypto.ElGamalPK):
+class ElectionPK(HeliosObject):
 
     FIELDS = ["g", "p", "q", "y"]
+    # If a key=="public_key" is found, create an instance of
+    # this class instead of just using the value in the dictionary
     JSON_NAME = "public_key"
 
     def __init__(self, dct):
-        HeliosObject.__init__(self, dct)
-        crypto.ElGamalPK.__init__(self, self.g, self.p, self.q, self.y)
+        super().__init__(dct)
+        self.g = int(self.g)
+        self.p = int(self.p)
+        self.q = int(self.q)
+        self.y = int(self.y)
 
     def toJSONDict(self):
         out = {}
@@ -217,3 +227,86 @@ class EncryptedAnswer(HeliosObject):
 
     def __init__(self, dct):
         super().__init__(dct)
+
+    def verify_answer(self, public_key, question_max):
+        pass
+
+class ElGamalCiphertext(HeliosObject):
+
+    FIELDS = ["alpha", "beta"]
+    JSON_NAME = "choices"
+
+    def __init__(self, dct):
+        super().__init__(dct)
+        self.alpha = int(self.alpha)
+        self.beta = int(self.beta)
+
+    def toJSONDict(self):
+        return {"alpha": str(self.alpha), "beta": str(self.beta)}
+
+class HeliosCPProof(HeliosObject):
+
+    FIELDS = ["challenge", "commitment", "response"]
+
+    def __init__(self, dct):
+        #FIXME: Add error checking
+        self.challenge = int(dct["challenge"])
+        self.A = int(dct["commitment"]["A"])
+        self.B = int(dct["commitment"]["B"])
+        self.response = int(dct["response"])
+
+    def toJSONDict(self):
+        out = {}
+        out["challenge"] = str(self.challenge)
+        out["commitment"] = {"A": str(self.A), "B": str(self.B)}
+        out["response"] = str(self.response)
+        return out
+
+    #FIXME: plaintext: m or g^m???
+    def verify_proof(self, public_key, plaintext, ciphertext):
+        g = public_key.g
+        p = public_key.p
+        X = public_key.y
+        Y = ciphertext.alpha
+        Z = (ciphertext.beta * crypto.modinverse(plaintext, p)) % p
+
+        return crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
+                                       self.challenge, self.response )
+
+class HeliosDCPProof(HeliosObject):
+
+    JSON_NAME = ["individual_proofs", "overall_proof"]
+
+    def __init__(self, proofs):
+        self.proofs = []
+        for proof in proofs:
+            self.proofs.append(HeliosCPProof(proof))
+
+    def toJSONDict(self):
+        return [proof.toJSONDict() for proof in self.proofs]
+
+    def verify_proof(self, public_key, ciphertext):
+        g = public_key.g
+        p = public_key.p
+        str_to_hash = ""
+        computed_challenge = 0
+
+        for v,proof in enumerate(self.proofs):
+            g_v = pow(g, v, p)
+
+            # Create string to hash
+            str_to_hash += "{},{},".format(proof.A, proof.B)
+
+            # Compute total challenge
+            computed_challenge += proof.challenge
+
+            # Check each proof
+            if not proof.verify_proof(public_key, g_v, ciphertext):
+                return False
+
+        str_to_hash = str_to_hash.rstrip(",")
+
+        # Compute expected challenge
+        expected_challenge = crypto.int_sha1(str_to_hash)
+
+        return expected_challenge == computed_challenge
