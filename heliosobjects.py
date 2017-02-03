@@ -43,6 +43,8 @@ class HeliosObject(object):
 
         HeliosObject.__subdict = all_subclasses(HeliosObject, "JSON_NAME")
 
+        self.hash = crypto.b64_sha256(json.dumps(dct))
+
         for field in self.FIELDS:
             try:
                 if type(field) == tuple:
@@ -152,6 +154,21 @@ class ElectionPK(HeliosObject):
         out["y"] = str(self.y)
         return out
 
+    def check_membership(self, ciphertext):
+        if not (1 < ciphertext.alpha < (self.p-1)):
+            return False
+
+        if not (1 < ciphertext.beta < (self.p-1)):
+            return False
+
+        if pow(ciphertext.alpha, self.q, self.p) != 1:
+            return False
+
+        if pow(ciphertext.beta, self.q, self.p) != 1:
+            return False
+
+        return True
+
 
 class Election(HeliosObject):
 
@@ -212,6 +229,7 @@ class Ballot(HeliosObject):
     def __init__(self, dct):
         super().__init__(dct)
 
+
 class Vote(HeliosObject):
 
     FIELDS = ["answers", "election_hash", "election_uuid"]
@@ -219,6 +237,25 @@ class Vote(HeliosObject):
 
     def __init__(self, dct):
         super().__init__(dct)
+
+    def verify(self, election):
+        if len(self.answers) != len(election.questions):
+            return False
+
+        if self.election_hash != election.hash:
+            return False
+
+        if self.election_uuid != election.uuid:
+            return False
+
+        for i in range(len(election.questions)):
+            answer = self.answers[i]
+            question = election.questions[i]
+
+            if not answer.verify(election.public_key, question['min'], question['max']):
+                return False
+
+        return True
 
 
 class EncryptedAnswer(HeliosObject):
@@ -229,23 +266,27 @@ class EncryptedAnswer(HeliosObject):
     def __init__(self, dct):
         super().__init__(dct)
 
-    def verify_answer(self, public_key, question_max=None):
+    def verify(self, public_key, question_min=0, question_max=None):
         homomorphic_prod = 1
 
         for choice_num,choice in enumerate(self.choices):
             dcpproof = self.individual_proofs[choice_num]
 
-            if not dcpproof.verify_proof(public_key, choice, 1):
+            if not public_key.check_membership(choice):
+                return False
+
+            if not dcpproof.verify(public_key, choice, 0, 1):
                 return False
 
             if question_max is not None:
                 homomorphic_prod = choice * homomorphic_prod
 
-        try:
-            if not self.overall_proof.verify_proof(public_key, homomorphic_prod, question_max):
-                return False
-        except AttributeError:
-            if question_max is not None:
+        # QUESTION: What if there is a min but no max? Still need an overall proof
+        if question_max is not None:
+            try:
+                if not self.overall_proof.verify(public_key, homomorphic_prod, question_min, question_max):
+                    return False
+            except AttributeError:
                 helios_log("WARNING: 'question_max' is set but overall proof is missing!!!")
                 return False
 
@@ -271,7 +312,6 @@ class ElGamalCiphertext(HeliosObject):
             beta = self.beta * other.beta
         return ElGamalCiphertext({"alpha": alpha, "beta": beta})
 
-
     def toJSONDict(self):
         return {"alpha": str(self.alpha), "beta": str(self.beta)}
 
@@ -294,7 +334,7 @@ class HeliosCPProof(HeliosObject):
         return out
 
     #FIXME: plaintext: m or g^m???
-    def verify_proof(self, public_key, plaintext, ciphertext):
+    def verify(self, public_key, plaintext, ciphertext):
         g = public_key.g
         p = public_key.p
         X = public_key.y
@@ -316,17 +356,17 @@ class HeliosDCPProof(HeliosObject):
     def toJSONDict(self):
         return [proof.toJSONDict() for proof in self.proofs]
 
-    def verify_proof(self, public_key, ciphertext, max_allowed):
+    def verify(self, public_key, ciphertext, min_allowed, max_allowed):
         g = public_key.g
         p = public_key.p
         str_to_hash = ""
         computed_challenge = 0
 
-        if len(self.proofs) != (max_allowed+1):
+        if len(self.proofs) != (max_allowed-min_allowed+1):
             return False
 
         for v,proof in enumerate(self.proofs):
-            g_v = pow(g, v, p)
+            g_v = pow(g, v+min_allowed, p)
 
             # Create string to hash
             str_to_hash += "{},{},".format(proof.A, proof.B)
@@ -335,7 +375,7 @@ class HeliosDCPProof(HeliosObject):
             computed_challenge += proof.challenge
 
             # Check each proof
-            if not proof.verify_proof(public_key, g_v, ciphertext):
+            if not proof.verify(public_key, g_v, ciphertext):
                 return False
         computed_challenge = computed_challenge % public_key.q
         str_to_hash = str_to_hash.rstrip(",")

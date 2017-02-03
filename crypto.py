@@ -1,4 +1,5 @@
 import hashlib
+import base64
 
 def xgcd(a, b):
     rprev, r = a, b
@@ -45,3 +46,7 @@ def verify_cp_proof(triple, g, p, commitment, challenge, response):
 
 def int_sha1(string):
     return int(hashlib.sha1(string.encode()).hexdigest(),16)
+
+def b64_sha256(string):
+    out = hashlib.sha256(string.encode()).digest()
+    return base64.b64encode(out)[:-1].decode()

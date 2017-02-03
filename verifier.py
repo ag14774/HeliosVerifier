@@ -34,6 +34,12 @@ class Verifier(object):
         self.short_ballots = {}
         self.ballots = {}
 
+    def verify_ballot_uuid(self, uuid):
+        ballot = self.ballots[uuid]
+        return self.verify_ballot(ballot)
+
+    def verify_ballot(self, ballot):
+        return ballot.vote.verify(self.election)
 
     def fetch_election_info(self, verbose=False, path=None, force_download=False):
         if path is None or force_download is True:
@@ -196,16 +202,14 @@ if __name__ == "__main__":
 
     verifier = Verifier(args.uuid, args.host)
     verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
-    """
+
     for k,ballot in verifier.ballots.items():
         if ballot.vote is not None:
-            vote = ballot.vote
-            for answer in vote.answers:
-                test = answer.verify_answer(verifier.election.public_key)
-                if test is True:
-                    helios_log("SUCCESS")
-                else:
-                    helios_log("FAILED")
-    """
+            test = verifier.verify_ballot(ballot)
+            if test is True:
+                helios_log("SUCCESS")
+            else:
+                helios_log("FAILED")
+
     #print(verifier.election.public_key.p,type(verifier.election.public_key.p))
     verifier.save_all(args.path)
