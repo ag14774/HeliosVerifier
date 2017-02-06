@@ -183,14 +183,14 @@ class Election(HeliosObject):
 
     def verify_voters_hash(self, voters, verbose=True):
         if self.openreg==False and self.voters_hash==None:
-            helios_log("WARNING: Open Registration election is disabled but "
+            helios_log("WARNING: Open Registration is disabled but "
                        + "voters_hash is null!", verbose)
             return False
         if self.openreg==True and self.voters_hash==None:
             return True
         if self.voters_hash != crypto.b64_sha256(json.dumps(voters)):
             return False
-            
+
         return True
 
     def verify_result(self, trustees, tallies, result):
