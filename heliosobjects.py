@@ -255,7 +255,6 @@ class Vote(HeliosObject):
         for i in range(len(election.questions)):
             answer = self.answers[i]
             question = election.questions[i]
-
             if not answer.verify(election.public_key, question['min'], question['max']):
                 return False
 
@@ -284,6 +283,8 @@ class EncryptedAnswer(HeliosObject):
 
     def __init__(self, dct):
         super().__init__(dct)
+        if self.overall_proof is not None:
+            self.overall_proof = HeliosDCPProof(self.overall_proof)
 
     def verify(self, public_key, question_min=0, question_max=None):
         homomorphic_prod = 1
@@ -300,7 +301,6 @@ class EncryptedAnswer(HeliosObject):
             if question_max is not None:
                 homomorphic_prod = choice * homomorphic_prod
 
-        # QUESTION: What if there is a min but no max? Still need an overall proof
         if question_max is not None:
             try:
                 if not self.overall_proof.verify(public_key, homomorphic_prod, question_min, question_max):
@@ -413,7 +413,7 @@ class HeliosSchnorrProof(HeliosObject):
 
 class HeliosDCPProof(HeliosObject):
 
-    JSON_NAME = ["individual_proofs", "overall_proof"]
+    JSON_NAME = "individual_proofs"
 
     def __init__(self, proofs):
         self.proofs = []

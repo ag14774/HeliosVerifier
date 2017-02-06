@@ -145,7 +145,6 @@ class Verifier(object):
             voter_uuid = voter["uuid"]
             self._voters_uuids_ordered.append(voter_uuid)
             self.voters[voter_uuid] = helios.CreateVoter(voter)
-            # FIXME: Maybe compare use_voter_aliases with voter type here?
 
     def fetch_ballots_info(self, verbose=False, path=None, force_download=False):
         if path is None or force_download is True:
@@ -200,6 +199,8 @@ class Verifier(object):
             short_ballots_path = path + "/ballots.json"
             ballots_path = path + "/ballots"
             trustees_path = path + "/trustees.json"
+            if not os.path.isfile(election_path):
+                force_download = True
 
         self.fetch_election_info(verbose, election_path, force_download)
         self.fetch_voters_info(verbose, voters_path, force_download)
@@ -287,5 +288,5 @@ if __name__ == "__main__":
 
     verifier = Verifier(args.uuid, args.host)
     verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
-    verifier.verify_election()
     verifier.save_all(args.path)
+    verifier.verify_election()
