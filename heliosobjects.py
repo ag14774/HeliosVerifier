@@ -181,16 +181,20 @@ class Election(HeliosObject):
         super().__init__(dct)
         # self.checkOpenReg()
 
-    def checkOpenReg(self, verbose=True):
-        if self.openreg==True and self.voters_hash!=None:
-            helios_log("WARNING: Open Registration election is enabled but "
-                       + "voters_hash is not null!", verbose)
-            return False
+    def verify_voters_hash(self, voters, verbose=True):
         if self.openreg==False and self.voters_hash==None:
             helios_log("WARNING: Open Registration election is disabled but "
                        + "voters_hash is null!", verbose)
             return False
+        if self.openreg==True and self.voters_hash==None:
+            return True
+        if self.voters_hash != crypto.b64_sha256(json.dumps(voters)):
+            return False
+            
         return True
+
+    def verify_result(self, trustees, tallies, result):
+        pass
 
 ################################################################################
 
@@ -257,6 +261,21 @@ class Vote(HeliosObject):
 
         return True
 
+    def get_all_hashes(self):
+        expected_hashes = 0
+        all_hashes = set()
+        for answer in self.answers:
+            for proof in answer.individual_proofs:
+                expected_hashes = expected_hashes + 1
+                all_hashes.add(proof.sha_challenge)
+            if answer.overall_proof is not None:
+                expected_hashes = expected_hashes + 1
+                all_hashes.add(answer.overall_proof.sha_challenge)
+        if 0 in all_hashes:
+            helios_log("ERROR: Please run verify() before running get_all_hashes!")
+            sys.exit(1)
+        return all_hashes,expected_hashes
+
 
 class EncryptedAnswer(HeliosObject):
 
@@ -320,7 +339,7 @@ class HeliosCPProof(HeliosObject):
     FIELDS = ["challenge", "commitment", "response"]
 
     def __init__(self, dct):
-        #FIXME: Add error checking
+        self.hash = crypto.b64_sha256(json.dumps(dct))
         self.challenge = int(dct["challenge"])
         self.A = int(dct["commitment"]["A"])
         self.B = int(dct["commitment"]["B"])
@@ -333,16 +352,64 @@ class HeliosCPProof(HeliosObject):
         out["response"] = str(self.response)
         return out
 
-    #FIXME: plaintext: m or g^m???
-    def verify(self, public_key, plaintext, ciphertext):
+    # (g^x, g^r, g^r^x) = (key, alpha, beta/g^v)
+    def verify_choice(self, public_key, plaintext, ciphertext):
         g = public_key.g
         p = public_key.p
+        # QUESTION: Check if proof elements are in group?
         X = public_key.y
         Y = ciphertext.alpha
         Z = (ciphertext.beta * crypto.modinverse(plaintext, p)) % p
 
         return crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
                                        self.challenge, self.response )
+
+    # (g^r, g^x, g^r^x) = (alpha, key, dec_factor)
+    def verify_partial_decryption_proof(self, public_key, dec_factor, ciphertext):
+        g = public_key.g
+        p = public_key.p
+        X = ciphertext.alpha
+        Y = public_key.y
+        Z = dec_factor
+
+        if not crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
+                                       self.challenge, self.response ):
+            return False
+
+        computed_challenge = crypto.int_sha1( str(self.A) + "," + str(self.B) )
+
+        return computed_challenge == self.challenge
+
+class HeliosSchnorrProof(HeliosObject):
+
+    FIELDS = ["challenge", "commitment", "response"]
+
+    def __init__(self, dct):
+        self.hash = crypto.b64_sha256(json.dumps(dct))
+        self.challenge = int(dct["challenge"])
+        self.commitment = int(dct["commitment"])
+        self.response = int(dct["response"])
+
+    def toJSONDict(self):
+        out = {}
+        out["challenge"] = str(self.challenge)
+        out["commitment"] = str(self.commitment)
+        out["response"] = str(self.response)
+        return out
+
+    def verify(self, public_key):
+        g = public_key.g
+        p = public_key.p
+        X = public_key.y
+
+        if not crypto.verify_schnorr_proof(X, g, p, self.commitment,
+                                           self.challenge, self.response):
+            return False
+
+        expected_challenge = crypto.int_sha1(str(self.commitment))
+
+        return expected_challenge == self.challenge
+
 
 class HeliosDCPProof(HeliosObject):
 
@@ -352,6 +419,7 @@ class HeliosDCPProof(HeliosObject):
         self.proofs = []
         for proof in proofs:
             self.proofs.append(HeliosCPProof(proof))
+        self.sha_challenge = 0
 
     def toJSONDict(self):
         return [proof.toJSONDict() for proof in self.proofs]
@@ -375,12 +443,52 @@ class HeliosDCPProof(HeliosObject):
             computed_challenge += proof.challenge
 
             # Check each proof
-            if not proof.verify(public_key, g_v, ciphertext):
+            if not proof.verify_choice(public_key, g_v, ciphertext):
                 return False
         computed_challenge = computed_challenge % public_key.q
         str_to_hash = str_to_hash.rstrip(",")
 
         # Compute expected challenge
         expected_challenge = crypto.int_sha1(str_to_hash)
+        self.sha_challenge = expected_challenge
 
         return expected_challenge == computed_challenge
+
+
+class Trustee(HeliosObject):
+
+    FIELDS = ["decryption_factors", "decryption_proofs", ("email"), "pok",
+              "public_key", "public_key_hash", "uuid"]
+
+    def __init__(self, dct):
+        self.decryption_factors = []
+        for factor_list in dct["decryption_factors"]:
+            temp = [int(x) for x in factor_list]
+            self.decryption_factors.append(temp)
+
+        self.decryption_proofs = []
+        for proof_list in dct["decryption_proofs"]:
+            temp = [HeliosCPProof(x) for x in proof_list]
+            self.decryption_proofs.append(temp)
+
+        try:
+            self.email = dct["email"]
+        except AttributeError:
+            pass
+
+        self.pok = HeliosSchnorrProof(dct["pok"])
+        self.public_key = ElectionPK(dct["public_key"])
+        self.public_key_hash = dct["public_key_hash"]
+        self.uuid = dct["uuid"]
+
+    def toJSONDict(self):
+        out = super().toJSONDict()
+        decryption_factors = out["decryption_factors"]
+        out["decryption_factors"] = []
+        for factor_list in decryption_factors:
+            temp = [str(x) for x in factor_list]
+            out["decryption_factors"].append(temp)
+        return out
+
+    def verify_secret_key(self):
+        return self.pok.verify(self.public_key)

@@ -18,12 +18,18 @@ def xgcd(a, b):
         t = tnext
         if r==0: return (rprev,sprev,tprev)
 
+inverse_cache = {}
 def modinverse(a ,b):
     '''Find a^(-1) mod b'''
-    (r,s,t) = xgcd(a, b)
-    if r!=1:
-        raise ValueError("remainder not equal to 1")
-    return s%b
+    try:
+        return inverse_cache[(a,b)]
+    except Exception:
+        (r,s,t) = xgcd(a, b)
+        if r!=1:
+            raise ValueError("remainder not equal to 1")
+        result = s%b
+        inverse_cache[(a,b)] = result
+        return result
 
 def verify_cp_proof(triple, g, p, commitment, challenge, response):
     X = triple[0]
@@ -42,6 +48,13 @@ def verify_cp_proof(triple, g, p, commitment, challenge, response):
     if xresponse != beta_z_c:
         return False
 
+    return True
+
+def verify_schnorr_proof(X, g, p, commitment, challenge, response):
+    gresponse = pow(g, response, p)
+    alpha_x_c = (pow(X, challenge, p) * commitment) % p
+    if gresponse != alpha_x_c:
+        return False
     return True
 
 def int_sha1(string):

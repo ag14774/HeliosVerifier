@@ -7,13 +7,14 @@ import sys
 import json
 from tqdm import tqdm
 
-
+# QUESTION: What to store in the hashtable?
+# QUESTION: values reduced modulo p(large one) instead of q(small one)
+#           Is this caught by the hash check and how?
 
 def fetch_json(url):
     try:
         response = requests.get(url)
         response.raise_for_status()
-    # FIXME: maybe do not handle here? temporary
     except requests.exceptions.MissingSchema:
         with open(url) as json_file:
             return json.load(json_file)
@@ -30,16 +31,76 @@ class Verifier(object):
         self.host = host
         self.election = None
         self.voters = {}
+        self.proof_set = set()
         self._voters_uuids_ordered = [] # Perhaps I should remove this?
         self.short_ballots = {}
         self.ballots = {}
+        self.trustees = {}
 
     def verify_ballot_uuid(self, uuid):
         ballot = self.ballots[uuid]
         return self.verify_ballot(ballot)
 
     def verify_ballot(self, ballot):
-        return ballot.vote.verify(self.election)
+        try:
+            valid = ballot.vote.verify(self.election) #raise exception here if vote is None
+            proofs,expected_proofs = ballot.vote.get_all_hashes()
+            if len(proofs) != expected_proofs:
+                return False
+            proof_set_length = len(self.proof_set)
+            expected_proof_set_length = proof_set_length + expected_proofs
+            self.proof_set = self.proof_set.union(proofs)
+            if len(self.proof_set) != expected_proof_set_length:
+                return False
+            return valid
+        except AttributeError as e:
+            if ballot.vote is None:
+                return True
+            else:
+                print(str(e))
+                sys.exit(1)
+
+    def verify_trustee(self, trustee, verbose=True):
+        try:
+            email = trustee.email
+        except AttributeError:
+            email = "undefined"
+        helios_log("Trustee: \033[94m" + email + "\033[0m, uuid: \033[94m"
+                   + trustee.uuid + "\033[0m", verbose)
+        if not trustee.verify_secret_key():
+            helios_log("\033[91mERROR:\033[0m Could not verify knowledge of secret key!",verbose)
+            return False
+
+        helios_log("Trustee verified!", verbose)
+        return True
+
+    def verify_election(self):
+        print()
+        helios_log("Checking election info...")
+        helios_log("Election name: \033[94m" + self.election.name + "\033[0m")
+        helios_log("Election fingerprint: \033[94m" + self.election.hash + "\033[0m")
+        if not self.election.verify_voters_hash(self.voters.values()):
+            helios_log("WARNING: Could not check voter list hash!")
+
+        print()
+        helios_log("Verifying ballots...")
+        for k,ballot in tqdm(self.ballots.items(), unit=' ballots'):
+            valid = self.verify_ballot(ballot)
+            if not valid:
+                print()
+                helios_log("\033[91mERROR:\033[0m Ballot \033[94m{}\033[0m could not be verified. Terminating!".format(k))
+                sys.exit(1)
+
+        print()
+        helios_log("Verifying trustees...")
+        for k,trustee in self.trustees.items():
+            print()
+            valid = self.verify_trustee(trustee)
+            if not valid:
+                print()
+                helios_log("\033[91mERROR:\033[0m Trustee \033[94m{}\033[0m is dishonest!".format(k))
+                sys.exit(1)
+
 
     def fetch_election_info(self, verbose=False, path=None, force_download=False):
         if path is None or force_download is True:
@@ -59,7 +120,7 @@ class Verifier(object):
         else:
             voters_url = path
 
-        helios_log("Downloading voters info...", verbose)
+        helios_log("Downloading voters...", verbose)
 
         temp_voters = []
         after = ""
@@ -94,7 +155,7 @@ class Verifier(object):
             ballots_url = path
             url_end = ".json"
 
-        helios_log("Downloading ballots...")
+        helios_log("Downloading ballots...", verbose)
         for uuid,voter in tqdm(self.voters.items(),disable=not verbose,unit=' voters'):
             addr = ballots_url + "/" + uuid + url_end
             ballot = fetch_json(addr)
@@ -113,11 +174,24 @@ class Verifier(object):
         for short_ballot in short_ballots:
             self.short_ballots[short_ballot["voter_uuid"]] = helios.Ballot(short_ballot)
 
+    def fetch_trustees_info(self, verbose=False, path=None, force_download=False):
+        if path is None or force_download is True:
+            trustees_url = self.host + "/elections/" + self.uuid + "/trustees"
+        else:
+            trustees_url = path
+
+        helios_log("Downloading trustees...", verbose)
+        trustees_json = fetch_json(trustees_url)
+
+        for trustee in trustees_json:
+            self.trustees[trustee["uuid"]] = helios.Trustee(trustee)
+
     def fetch_all_election_data(self, verbose=False, path=None, force_download=False):
         election_path = None
         voters_path = None
         short_ballots_path = None
         ballots_path = None
+        trustees_path = None
 
         if path is not None and force_download is False:
             path = path.rstrip("/")
@@ -125,11 +199,13 @@ class Verifier(object):
             voters_path = path + "/voters.json"
             short_ballots_path = path + "/ballots.json"
             ballots_path = path + "/ballots"
+            trustees_path = path + "/trustees.json"
 
         self.fetch_election_info(verbose, election_path, force_download)
         self.fetch_voters_info(verbose, voters_path, force_download)
         self.fetch_short_ballots_info(verbose, short_ballots_path, force_download)
         self.fetch_ballots_info(verbose, ballots_path, force_download)
+        self.fetch_trustees_info(verbose, trustees_path, force_download)
 
     def save_election_info(self, path):
         """Serialise 'self.election' and save to file"""
@@ -165,6 +241,13 @@ class Verifier(object):
             ballot_path = path + "/" + uuid + ".json"
             self.save_single_ballot(uuid, ballot_path)
 
+    def save_trustees_info(self, path):
+        """Serialse 'self.trustees' and save to file"""
+        trustees = []
+        for k,trustee in self.trustees.items():
+            trustees.append(trustee.toJSONDict())
+        helios.HeliosObject.json2file(trustees, path)
+
 
     # Add verbose option for folder creation
     def save_all(self, path):
@@ -179,6 +262,7 @@ class Verifier(object):
         voters_path = path + "/voters.json"
         short_ballots_path = path + "/ballots.json"
         ballots_path = path + "/ballots"
+        trustees_path = path + "/trustees.json"
 
         os.makedirs(path, exist_ok=True)
         os.makedirs(ballots_path, exist_ok=True)
@@ -187,6 +271,7 @@ class Verifier(object):
         self.save_voters_info(voters_path)
         self.save_short_ballots(short_ballots_path)
         self.save_all_ballots(ballots_path)
+        self.save_trustees_info(trustees_path)
 
 if __name__ == "__main__":
     import argparse
@@ -202,14 +287,5 @@ if __name__ == "__main__":
 
     verifier = Verifier(args.uuid, args.host)
     verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
-
-    for k,ballot in verifier.ballots.items():
-        if ballot.vote is not None:
-            test = verifier.verify_ballot(ballot)
-            if test is True:
-                helios_log("SUCCESS")
-            else:
-                helios_log("FAILED")
-
-    #print(verifier.election.public_key.p,type(verifier.election.public_key.p))
+    verifier.verify_election()
     verifier.save_all(args.path)
