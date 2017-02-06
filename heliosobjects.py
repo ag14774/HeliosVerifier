@@ -1,6 +1,7 @@
 
 import json
 import crypto
+import sys
 
 def helios_log(out, verbose=True):
     if verbose is True:

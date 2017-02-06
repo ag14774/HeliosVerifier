@@ -43,7 +43,8 @@ class Verifier(object):
 
     def verify_ballot(self, ballot):
         try:
-            valid = ballot.vote.verify(self.election) #raise exception here if vote is None
+            if not ballot.vote.verify(self.election): #raise exception here if vote is None
+                return False
             proofs,expected_proofs = ballot.vote.get_all_hashes()
             if len(proofs) != expected_proofs:
                 return False
@@ -52,7 +53,7 @@ class Verifier(object):
             self.proof_set = self.proof_set.union(proofs)
             if len(self.proof_set) != expected_proof_set_length:
                 return False
-            return valid
+            return True
         except AttributeError as e:
             if ballot.vote is None:
                 return True
@@ -207,6 +208,7 @@ class Verifier(object):
         self.fetch_short_ballots_info(verbose, short_ballots_path, force_download)
         self.fetch_ballots_info(verbose, ballots_path, force_download)
         self.fetch_trustees_info(verbose, trustees_path, force_download)
+        return force_download
 
     def save_election_info(self, path):
         """Serialise 'self.election' and save to file"""
@@ -287,6 +289,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     verifier = Verifier(args.uuid, args.host)
-    verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
-    verifier.save_all(args.path)
+    from_host = verifier.fetch_all_election_data(args.verbose, args.path, args.force_download)
+    if from_host:
+        verifier.save_all(args.path)
     verifier.verify_election()
