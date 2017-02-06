@@ -1,6 +1,7 @@
 import hashlib
 import base64
 
+"""
 def xgcd(a, b):
     rprev, r = a, b
     sprev, s = 1, 0
@@ -30,6 +31,7 @@ def modinverse(a ,b):
         result = s%b
         inverse_cache[(a,b)] = result
         return result
+"""
 
 def verify_cp_proof(triple, g, p, commitment, challenge, response):
     X = triple[0]

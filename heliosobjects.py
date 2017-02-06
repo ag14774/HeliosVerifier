@@ -339,6 +339,8 @@ class HeliosCPProof(HeliosObject):
 
     FIELDS = ["challenge", "commitment", "response"]
 
+    PLAINTEXT_INVERSE_CACHE = {}
+
     def __init__(self, dct):
         self.hash = crypto.b64_sha256(json.dumps(dct))
         self.challenge = int(dct["challenge"])
@@ -357,10 +359,17 @@ class HeliosCPProof(HeliosObject):
     def verify_choice(self, public_key, plaintext, ciphertext):
         g = public_key.g
         p = public_key.p
+        q = public_key.q
         # QUESTION: Check if proof elements are in group?
+        try:
+            g_2minus_m = HeliosCPProof.PLAINTEXT_INVERSE_CACHE[plaintext]
+        except KeyError:
+            i_plaintext = q - plaintext #(mod q)
+            g_2minus_m = pow(g, i_plaintext, p)
+            HeliosCPProof.PLAINTEXT_INVERSE_CACHE[plaintext] = g_2minus_m
         X = public_key.y
         Y = ciphertext.alpha
-        Z = (ciphertext.beta * crypto.modinverse(plaintext, p)) % p
+        Z = ( ciphertext.beta * g_2minus_m ) % p
 
         return crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
                                        self.challenge, self.response )
@@ -435,8 +444,6 @@ class HeliosDCPProof(HeliosObject):
             return False
 
         for v,proof in enumerate(self.proofs):
-            g_v = pow(g, v+min_allowed, p)
-
             # Create string to hash
             str_to_hash += "{},{},".format(proof.A, proof.B)
 
@@ -444,7 +451,7 @@ class HeliosDCPProof(HeliosObject):
             computed_challenge += proof.challenge
 
             # Check each proof
-            if not proof.verify_choice(public_key, g_v, ciphertext):
+            if not proof.verify_choice(public_key, v+min_allowed, ciphertext):
                 return False
         computed_challenge = computed_challenge % public_key.q
         str_to_hash = str_to_hash.rstrip(",")
