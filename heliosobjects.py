@@ -30,6 +30,12 @@ def all_subclasses(cls, keyattr="__name__"):
         out.update(all_subclasses(sub, keyattr))
     return out
 
+class HeliosException(Exception):
+    def __init__(self, message, msg_type=""):
+        super().__init__(message)
+        self.message = message
+        self.msg_type = msg_type
+
 class HeliosObject(object):
 
     # Fields with alternatives are grouped in tuples
@@ -140,6 +146,17 @@ class ElectionPK(HeliosObject):
     # this class instead of just using the value in the dictionary
     JSON_NAME = "public_key"
 
+    class CiphertextCheckError(HeliosException):
+        def __init__(self, message="", uuid=None, question_num=None, choice_num=None):
+            super().__init__(message)
+            self.uuid = uuid
+            self.question_num = question_num
+            self.choice_num = choice_num
+
+    class ElectionParamsError(HeliosException):
+        def __init__(self, message=""):
+            super().__init__(message)
+
     def __init__(self, dct):
         super().__init__(dct)
         self.g = int(self.g)
@@ -157,18 +174,32 @@ class ElectionPK(HeliosObject):
 
     def check_membership(self, ciphertext):
         if not (1 < ciphertext.alpha < (self.p-1)):
-            return False
+            raise self.CiphertextCheckError("alpha not within the correct range")
 
         if not (1 < ciphertext.beta < (self.p-1)):
-            return False
+            raise self.CiphertextCheckError("beta not within the correct range")
 
         if pow(ciphertext.alpha, self.q, self.p) != 1:
-            return False
+            raise self.CiphertextCheckError("alpha is not an element of the group")
 
         if pow(ciphertext.beta, self.q, self.p) != 1:
-            return False
+            raise self.CiphertextCheckError("beta is not an element of the group")
 
         return True
+
+    def check_key_params(self):
+        if not miller_rabin(self.p):
+            raise self.ElectionParamsError("p is not a prime")
+        if not miller_rabin(self.q):
+            raise self.ElectionParamsError("q is not a prime")
+        if self.q == (self.p - 1)/2:
+            return True
+        else:
+            if ((self.p - 1) % self.q) > 0:
+                raise self.ElectionParamsError("q does not divide p-1")
+            if (self.p - 1) % (self.q*self.q) == 0:
+                raise self.ElectionParamsError("q^2 divides p-1")
+            return True
 
 
 class Election(HeliosObject):
@@ -178,6 +209,14 @@ class Election(HeliosObject):
               "use_voter_aliases", "uuid", "voters_hash",
               "voting_ends_at", "voting_starts_at"]
 
+    class VotersHashMissing(HeliosException):
+        def __init__(self, message=""):
+            super().__init__(message)
+
+    class VotersHashCheckError(HeliosException):
+        def __init__(self, message=""):
+            super().__init__(message)
+
     def __init__(self, dct):
         super().__init__(dct)
         # self.checkOpenReg()
@@ -186,11 +225,11 @@ class Election(HeliosObject):
         if self.openreg==False and self.voters_hash==None:
             helios_log("WARNING: Open Registration is disabled but "
                        + "voters_hash is null!", verbose)
-            return False
+            raise self.VotersHashMissing()
         if self.openreg==True and self.voters_hash==None:
             return True
         if self.voters_hash != crypto.b64_sha256(json.dumps(voters)):
-            return False
+            raise self.VotersHashCheckError()
 
         return True
 
@@ -234,30 +273,56 @@ class Ballot(HeliosObject):
     def __init__(self, dct):
         super().__init__(dct)
 
+    def verify(self, election):
+        if self.vote is not None:
+            try:
+                self.vote.verify(election)
+            except HeliosException as exc:
+                exc.uuid = self.voter_uuid
+                raise
+
 
 class Vote(HeliosObject):
 
     FIELDS = ["answers", "election_hash", "election_uuid"]
     JSON_NAME = "vote"
 
+    class BallotWrongNumberOfAnswers(HeliosException):
+        def __init__(self, message="", uuid=None):
+            super().__init__(message)
+            self.uuid = uuid
+
+    class BallotNonMatchingElectionHash(HeliosException):
+        def __init__(self, message="", uuid=None):
+            super().__init__(message)
+            self.uuid = uuid
+
+    class BallotNonMatchingElectionUUID(HeliosException):
+        def __init__(self, message="", uuid=None):
+            super().__init__(message)
+            self.uuid = uuid
+
     def __init__(self, dct):
         super().__init__(dct)
 
     def verify(self, election):
         if len(self.answers) != len(election.questions):
-            return False
+            raise self.BallotWrongNumberOfAnswers()
 
         if self.election_hash != election.hash:
-            return False
+            raise self.BallotNonMatchingElectionHash()
 
         if self.election_uuid != election.uuid:
-            return False
+            raise self.BallotNonMatchingElectionUUID()
 
         for i in range(len(election.questions)):
             answer = self.answers[i]
             question = election.questions[i]
-            if not answer.verify(election.public_key, question['min'], question['max']):
-                return False
+            try:
+                answer.verify(election.public_key, question['min'], question['max'])
+            except HeliosException as exc:
+                exc.question_num = i # Add question num to exception
+                raise
 
         return True
 
@@ -282,6 +347,12 @@ class EncryptedAnswer(HeliosObject):
     FIELDS = ["choices", "individual_proofs", "overall_proof"]
     JSON_NAME = "answers"
 
+    class OverallProofMissing(HeliosException):
+        def __init__(self, message="", uuid=None, question_num=None):
+            super().__init__(message)
+            self.uuid = uuid
+            self.question_num = question_num
+
     def __init__(self, dct):
         super().__init__(dct)
         if self.overall_proof is not None:
@@ -293,22 +364,31 @@ class EncryptedAnswer(HeliosObject):
         for choice_num,choice in enumerate(self.choices):
             dcpproof = self.individual_proofs[choice_num]
 
-            if not public_key.check_membership(choice):
-                return False
+            try:
+                public_key.check_membership(choice)
+            except HeliosException as exc:
+                exc.choice_num = choice_num
+                raise
 
-            if not dcpproof.verify(public_key, choice, 0, 1):
-                return False
+            try:
+                dcpproof.verify(public_key, choice, 0, 1)
+            except HeliosException as exc:
+                exc.proof_type = "individual"
+                exc.choice_num = choice_num
+                raise
 
             if question_max is not None:
                 homomorphic_prod = choice * homomorphic_prod
 
         if question_max is not None:
             try:
-                if not self.overall_proof.verify(public_key, homomorphic_prod, question_min, question_max):
-                    return False
+                self.overall_proof.verify(public_key, homomorphic_prod, question_min, question_max)
+            except HeliosException as exc:
+                exc.proof_type = "overall"
+                raise
             except AttributeError:
                 helios_log("WARNING: 'question_max' is set but overall proof is missing!!!")
-                return False
+                raise self.OverallProofMissing()
 
         return True
 
@@ -334,6 +414,78 @@ class ElGamalCiphertext(HeliosObject):
 
     def toJSONDict(self):
         return {"alpha": str(self.alpha), "beta": str(self.beta)}
+
+class HeliosDCPProof(HeliosObject):
+
+    JSON_NAME = "individual_proofs"
+
+    class DCPWrongNumberOfProofs(HeliosException):
+        def __init__(self, message="", uuid=None, question_num=None,
+                     choice_num=None, proof_type=None):
+            super().__init__(message)
+            self.uuid = uuid
+            self.question_num = question_num
+            self.choice_num = choice_num
+            self.proof_type = proof
+
+    class DCPProofFailed(HeliosException):
+        def __init__(self, message="", uuid=None, question_num=None,
+                     choice_num=None, proof_type=None):
+            super().__init__(message)
+            self.uuid = uuid
+            self.question_num = question_num
+            self.choice_num = choice_num
+            self.proof_type = proof
+
+    class DCPChallengeCheckFailed(HeliosException):
+        def __init__(self, message="", uuid=None, question_num=None,
+                     choice_num=None, proof_type=None):
+            super().__init__(message)
+            self.uuid = uuid
+            self.question_num = question_num
+            self.choice_num = choice_num
+            self.proof_type = proof
+
+    def __init__(self, proofs):
+        self.proofs = []
+        for proof in proofs:
+            self.proofs.append(HeliosCPProof(proof))
+        self.sha_challenge = 0
+
+    def toJSONDict(self):
+        return [proof.toJSONDict() for proof in self.proofs]
+
+    def verify(self, public_key, ciphertext, min_allowed, max_allowed):
+        g = public_key.g
+        p = public_key.p
+        str_to_hash = ""
+        computed_challenge = 0
+
+        if len(self.proofs) != (max_allowed-min_allowed+1):
+            raise self.DCPWrongNumberOfProofs()
+
+        for v,proof in enumerate(self.proofs):
+            # Create string to hash
+            str_to_hash += "{},{},".format(proof.A, proof.B)
+
+            # Compute total challenge
+            computed_challenge += proof.challenge
+
+            # Check each proof
+            if not proof.verify_choice(public_key, v+min_allowed, ciphertext):
+                raise self.DCPProofFailed()
+        computed_challenge = computed_challenge % public_key.q
+        str_to_hash = str_to_hash.rstrip(",")
+
+        # Compute expected challenge
+        expected_challenge = crypto.int_sha1(str_to_hash)
+        self.sha_challenge = expected_challenge
+
+        res = (expected_challenge == computed_challenge)
+        if not res:
+            raise self.DCPChallengeCheckFailed()
+        else:
+            return True
 
 class HeliosCPProof(HeliosObject):
 
@@ -371,18 +523,19 @@ class HeliosCPProof(HeliosObject):
         Y = ciphertext.alpha
         Z = ( ciphertext.beta * g_2minus_m ) % p
 
-        return crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
+        return crypto.verify_cp_proof( (X,Y,Z), g, p, q, (self.A, self.B),
                                        self.challenge, self.response )
 
     # (g^r, g^x, g^r^x) = (alpha, key, dec_factor)
     def verify_partial_decryption_proof(self, public_key, dec_factor, ciphertext):
         g = public_key.g
         p = public_key.p
+        q = public_key.q
         X = ciphertext.alpha
         Y = public_key.y
         Z = dec_factor
 
-        if not crypto.verify_cp_proof( (X,Y,Z), g, p, (self.A, self.B),
+        if not crypto.verify_cp_proof( (X,Y,Z), g, p, q, (self.A, self.B),
                                        self.challenge, self.response ):
             return False
 
@@ -421,46 +574,7 @@ class HeliosSchnorrProof(HeliosObject):
         return expected_challenge == self.challenge
 
 
-class HeliosDCPProof(HeliosObject):
 
-    JSON_NAME = "individual_proofs"
-
-    def __init__(self, proofs):
-        self.proofs = []
-        for proof in proofs:
-            self.proofs.append(HeliosCPProof(proof))
-        self.sha_challenge = 0
-
-    def toJSONDict(self):
-        return [proof.toJSONDict() for proof in self.proofs]
-
-    def verify(self, public_key, ciphertext, min_allowed, max_allowed):
-        g = public_key.g
-        p = public_key.p
-        str_to_hash = ""
-        computed_challenge = 0
-
-        if len(self.proofs) != (max_allowed-min_allowed+1):
-            return False
-
-        for v,proof in enumerate(self.proofs):
-            # Create string to hash
-            str_to_hash += "{},{},".format(proof.A, proof.B)
-
-            # Compute total challenge
-            computed_challenge += proof.challenge
-
-            # Check each proof
-            if not proof.verify_choice(public_key, v+min_allowed, ciphertext):
-                return False
-        computed_challenge = computed_challenge % public_key.q
-        str_to_hash = str_to_hash.rstrip(",")
-
-        # Compute expected challenge
-        expected_challenge = crypto.int_sha1(str_to_hash)
-        self.sha_challenge = expected_challenge
-
-        return expected_challenge == computed_challenge
 
 
 class Trustee(HeliosObject):

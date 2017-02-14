@@ -24,6 +24,112 @@ def fetch_json(url):
     result = response.json()
     return result
 
+class Colours:
+
+    @staticmethod
+    def YELLOW(string):
+        return "\033[33m" + string + "\033[0m"
+
+    @staticmethod
+    def RED(string):
+        return "\033[91m" + string + "\033[0m"
+
+    @staticmethod
+    def BLUE(string):
+        return "\033[94m" + string + "\033[0m"
+
+class ErrorHandler(object):
+
+    def __init__(self):
+        self.error_counter = 0
+        self.warning_counter = 0
+        self.info_counter = 0
+        self.error_thresh = 5
+        self.general_prefix = "# "
+        self.error_prefix   = self.general_prefix + Colours.RED("ERROR: ")
+        self.warning_prefix = self.general_prefix + Colours.YELLOW("WARNING: ")
+        self.info_prefix    = self.general_prefix + Colours.BLUE("INFO: ")
+        self.read_msgs = []
+        self.unread_msgs = []
+
+    def print_unread_messages(self):
+        for err in self.unread_msgs:
+            print(err)
+            self.read_msgs.append(err)
+        self.unread_msgs = []
+
+    def print_msg(self, msg, msg_type="INFO", flush=True, store=True):
+        try:
+            raise helios.HeliosException(msg, msg_type)
+        except helios.HeliosException as e:
+            self.process_error()
+
+    def process_error(self, flush=True, store=True):
+        """Process HeliosException exceptions.
+        If store=True then the message will be
+        stored internally. To print message use
+        print_unread_messages.
+        If store=False then the message is printed
+        immediately without being stored.
+        If flush=True then all unread messages
+        are printed."""
+        try:
+            err_str = ""
+            raise
+        except helios.ElectionPK.CiphertextCheckError as e:
+            err_str += self.error_prefix
+            err_str += "Ballot {} could not be verified because ciphertext {} \
+                        of question {} did not pass the membership check.\n"  \
+                        .format(BLUE(e.uuid), BLUE(e.choice_num), BLUE(e.question_num))
+            err_str += "Reason: {}".format(YELLOW(e.message))
+            self.error_counter = self.error_counter + 1
+        except helios.ElectionPK.ElectionParamsError as e:
+            pass
+        except helios.Vote.BallotWrongNumberOfAnswers as e:
+            pass
+        except helios.Vote.BallotNonMatchingElectionHash as e:
+            pass
+        except helios.Vote.BallotNonMatchingElectionUUID as e:
+            pass
+        except helios.EncryptedAnswer.OverallProofMissing as e:
+            pass
+        except helios.HeliosDCPProof.DCPWrongNumberOfProofs as e:
+            pass
+        except helios.HeliosDCPProof.DCPProofFailed as e:
+            pass
+        except helios.HeliosDCPProof.DCPChallengeCheckFailed as e:
+            pass
+        except helios.Election.VotersHashMissing as e:
+            pass
+        except helios.Election.VotersHashCheckError as e:
+            pass
+        except helios.HeliosException as e:
+            if e.msg_type == "INFO":
+                err_str += self.info_prefix
+                self.info_counter += 1
+            elif e.msg_type == "WARNING":
+                err_str += self.warning_prefix
+                self.warning_counter += 1
+            elif e.msg_type == "ERROR":
+                err_str += self.error_prefix
+                self.error_counter += 1
+            err_str += e.message
+
+        if store is True:
+            self.unread_msgs.append(err_str)
+
+        if self.error_counter >= self.error_thresh:
+            self.print_unread_messages()
+            if store is False:
+                print(err_str)
+            sys.exit(1)
+
+        if store is False:
+            print(err_str)
+
+        if flush is True:
+            self.print_unread_messages()
+
 
 class Verifier(object):
     def __init__(self, uuid, host="https://vote.heliosvoting.org/helios"):
@@ -36,6 +142,7 @@ class Verifier(object):
         self.short_ballots = {}
         self.ballots = {}
         self.trustees = {}
+        self.error_handler = ErrorHandler()
 
     def verify_ballot_uuid(self, uuid):
         ballot = self.ballots[uuid]

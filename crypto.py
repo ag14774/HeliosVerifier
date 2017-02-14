@@ -1,44 +1,45 @@
 import hashlib
 import base64
+from random import randrange
 
-"""
-def xgcd(a, b):
-    rprev, r = a, b
-    sprev, s = 1, 0
-    tprev, t = 0, 1
+def miller_rabin(n, num_trials=4):
+    if n in [2,3,5,7]:
+        return True
+    if n<=10 or n%2 == 0:
+        return False
+    s = 0
+    d = n - 1
     while True:
-        q = rprev // r
-        rnext = rprev - q*r #Remainder calculations
-        rprev = r
-        r = rnext
-        snext = sprev - q*s #First Bezout coefficient
-        sprev = s
-        s = snext
-        tnext = tprev - q*t #Second Bezout coefficient
-        tprev = t
-        t = tnext
-        if r==0: return (rprev,sprev,tprev)
+        q, r = divmod(d, 2)
+        if r == 1:
+            break
+        s += 1
+        d = q
+    for i in range(num_trials):
+        a = randrange(2, n)
+        apow = pow(a, d, n)
+        if not (apow in [1, n-1]):
+            some_minus_one = False
+            for r in range(s-1):
+                apow = (apow**2)%n
+                if apow == n-1:
+                    some_minus_one = True
+                    break;
+        if (apow not in [1, n-1]) and not some_minus_one:
+            return False
+    return True
 
-inverse_cache = {}
-def modinverse(a ,b):
-    '''Find a^(-1) mod b'''
-    try:
-        return inverse_cache[(a,b)]
-    except Exception:
-        (r,s,t) = xgcd(a, b)
-        if r!=1:
-            raise ValueError("remainder not equal to 1")
-        result = s%b
-        inverse_cache[(a,b)] = result
-        return result
-"""
+# FIXME: Add check for response too? >= q
 
-def verify_cp_proof(triple, g, p, commitment, challenge, response):
+def verify_cp_proof(triple, g, p, q, commitment, challenge, response):
     X = triple[0]
     Y = triple[1]
     Z = triple[2]
     A = commitment[0]
     B = commitment[1]
+
+    if challenge>=q:
+        return False
 
     gresponse = pow(g, response, p)
     alpha_y_c = (pow(Y, challenge, p) * A) % p
@@ -52,7 +53,9 @@ def verify_cp_proof(triple, g, p, commitment, challenge, response):
 
     return True
 
-def verify_schnorr_proof(X, g, p, commitment, challenge, response):
+def verify_schnorr_proof(X, g, p, q, commitment, challenge, response):
+    if challenge >= q:
+        return False
     gresponse = pow(g, response, p)
     alpha_x_c = (pow(X, challenge, p) * commitment) % p
     if gresponse != alpha_x_c:
