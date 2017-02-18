@@ -195,7 +195,7 @@ class ElectionPK(HeliosObject):
 
         return True
 
-    def check_key_params(self):
+    def check_election_params(self):
         if not crypto.miller_rabin(self.p):
             raise self.ElectionParamsError("p is not a prime")
         if not crypto.miller_rabin(self.q):
@@ -431,7 +431,6 @@ class ElGamalCiphertext(HeliosObject):
         # super().__init__(dct)
         self.alpha = int(dct["alpha"])
         self.beta = int(dct["beta"])
-        self.__rmul__ = self.__mul__
 
     def __mul__(self, other):
         if other == 0 or other == 1:
@@ -441,6 +440,9 @@ class ElGamalCiphertext(HeliosObject):
             alpha = self.alpha * other.alpha
             beta = self.beta * other.beta
         return ElGamalCiphertext({"alpha": alpha, "beta": beta})
+
+    def __rmul__(self, other):
+        return ElGamalCiphertext.__mul__(self, other)
 
     def toJSONDict(self):
         return {"alpha": str(self.alpha), "beta": str(self.beta)}
@@ -627,7 +629,7 @@ class Trustee(HeliosObject):
         "public_key", "public_key_hash", "uuid"
     ]
 
-    class TrusteeSecretKeyVerificationFailed(HeliosException):
+    class TrusteeKeyVerificationFailed(HeliosException):
         def __init__(self, message="", email=None, uuid=None):
             super().__init__(message)
             self.email = email
@@ -672,11 +674,11 @@ class Trustee(HeliosObject):
     def verify_secret_key(self):
         # FIXME:check public key hash
         if self.pok.verify(self.public_key) is False:
-            raise self.TrusteeSecretKeyVerificationFailed(
+            raise self.TrusteeKeyVerificationFailed(
                 email=self.email, uuid=self.uuid)
         return True
 
-    def verify_decryption_proof(self, question_num, choice_num, ciphertext):
+    def verify_dec_proof(self, question_num, choice_num, ciphertext):
         dec_factor = self.decryption_factors[question_num][choice_num]
         proof = self.decryption_proofs[question_num][choice_num]
         res = proof.verify_partial_decryption_proof(self.public_key,
@@ -684,6 +686,12 @@ class Trustee(HeliosObject):
         if res is False:
             raise self.TrusteeDecryptionProofFailed(
                 uuid=self.uuid, email=self.email)
+        return True
+
+    def verify_decryption_proofs(self, ciphertexts):
+        for q_num in range(len(ciphertexts)):
+            for c_num in range(len(ciphertexts[q_num])):
+                self.verify_dec_proof(q_num, c_num, ciphertexts[q_num][c_num])
         return True
 
 
@@ -725,7 +733,8 @@ class Tally(HeliosObject):
     def verify_result(self, result):
         for q_num in range(len(self.factors)):
             for c_num in range(len(self.factors[q_num])):
-                temp = self.factors[q_num][c_num] * result[q_num][c_num]
+                temp = self.factors[q_num][c_num] * pow(
+                    self.pk.g, result[q_num][c_num], self.pk.p)
                 temp = temp % self.pk.p
                 if temp != self.tallies[q_num][c_num].beta:
                     raise self.ResultVerificationFailed(
@@ -734,15 +743,18 @@ class Tally(HeliosObject):
 
     def decrypt_from_factors(self):
         table = {}
-        for i in range(len(table) + 1):
+        for i in range(len(self.vote_fingerprints) + 1):
             table[pow(self.pk.g, i, self.pk.p)] = i
 
         for q_num in range(len(self.result)):
             for c_num in range(len(self.result[q_num])):
-                factor_inverse = crypto.modinverse(self.factors[q_num][c_num],
-                                                   self.pk.p)
-                beta = self.tallies[q_num][c_num].beta
-                self.result[q_num][c_num] = (beta * factor_inverse) % self.pk.p
-                self.result[q_num][c_num] = table[self.result[q_num][c_num]]
+                try:
+                    factor_inverse = crypto.modinverse(self.factors[q_num][c_num],
+                                                       self.pk.p)
+                    beta = self.tallies[q_num][c_num].beta
+                    self.result[q_num][c_num] = (beta * factor_inverse) % self.pk.p
+                    self.result[q_num][c_num] = table[self.result[q_num][c_num]]
+                except Exception as e:
+                    self.result[q_num][c_num] = -1
 
         return self.result
