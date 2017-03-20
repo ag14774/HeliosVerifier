@@ -38,6 +38,10 @@ def BLUE(string):
     return "\033[94m" + str(string) + "\033[0m"
 
 
+class VerificationError(Exception):
+    pass
+
+
 class MsgHandler(object):
     def __init__(self, verbose=False):
         self.wrapper = textwrap.TextWrapper()
@@ -50,8 +54,9 @@ class MsgHandler(object):
         self.warning_prefix = YELLOW("WARNING: ")
         self.info_prefix = ""  # + BLUE("INFO: ")
         self.msg_history = []
+        self.stop_immediately = False
         if not verbose:
-            self.error_thresh = 1
+            self.stop_immediately = True
             self.CiphertextCheckErrorHandler = self.SimpleErrorHandler
             self.ElectionParamsErrorHandler = self.SimpleErrorHandler
             self.BallotNotWellFormedHandler = self.SimpleErrorHandler
@@ -86,6 +91,9 @@ class MsgHandler(object):
         msg = self.error_prefix + msg
         self.error_counter += 1
         self.__print(msg, wrap)
+        if self.stop_immediately:
+            self.stop_immediately = False
+            raise VerificationError()
 
     def process_error(self, wrap=True):
         """
@@ -143,7 +151,7 @@ class MsgHandler(object):
         msg = e.__class__.__name__
         msg += ": Could not verify election!"
         if e.message:
-            msg += " Reason: {}".format(e.message)
+            msg += " Reason: {}.".format(e.message)
         return msg
 
     def CiphertextCheckErrorHandler(self, e):
@@ -388,6 +396,8 @@ class Verifier(object):
             self.verify_all_ballots()
             self.verify_all_trustees()
             self.verify_tally()
+        except VerificationError as e:
+            pass
         except KeyboardInterrupt as e:
             finished = 0
         except Exception as e:
