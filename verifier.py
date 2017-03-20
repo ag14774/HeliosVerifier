@@ -26,24 +26,16 @@ def fetch_json(url):
     return result
 
 
-class Colours:
-    @staticmethod
-    def YELLOW(string):
-        return "\033[33m" + str(string) + "\033[0m"
-
-    @staticmethod
-    def RED(string):
-        return "\033[91m" + str(string) + "\033[0m"
-
-    @staticmethod
-    def BLUE(string):
-        return "\033[94m" + str(string) + "\033[0m"
+def YELLOW(string):
+    return "\033[33m" + str(string) + "\033[0m"
 
 
-class VerifierException(Exception):
-    def __init__(self, code=0):
-        super().__init__()
-        self.code = code
+def RED(string):
+    return "\033[91m" + str(string) + "\033[0m"
+
+
+def BLUE(string):
+    return "\033[94m" + str(string) + "\033[0m"
 
 
 class MsgHandler(object):
@@ -54,14 +46,10 @@ class MsgHandler(object):
         self.wrapper.subsequent_indent = "| "
         self.error_counter = 0
         self.warning_counter = 0
-        self.info_counter = 0
-        self.error_thresh = 10
-        self.error_prefix = Colours.RED("ERROR: ")
-        self.warning_prefix = Colours.YELLOW("WARNING: ")
-        self.info_prefix = ""  # + Colours.BLUE("INFO: ")
-        self.read_msgs = []
-        self.unread_msgs = []
-        self.shutting_down = False
+        self.error_prefix = RED("ERROR: ")
+        self.warning_prefix = YELLOW("WARNING: ")
+        self.info_prefix = ""  # + BLUE("INFO: ")
+        self.msg_history = []
         if not verbose:
             self.error_thresh = 1
             self.CiphertextCheckErrorHandler = self.SimpleErrorHandler
@@ -79,235 +67,173 @@ class MsgHandler(object):
             self.TrusteeDecryptionProofFailedHandler = self.SimpleErrorHandler
             self.ResultVerificationFailedHandler = self.SimpleErrorHandler
 
-    def print_unread_messages(self):
-        for err in self.unread_msgs:
-            print(err)
-            self.read_msgs.append(err)
-        self.unread_msgs = []
-
-    def shutdown(self):
-        print()
-        self.print_unread_messages()
-        print()
-        self.shutting_down = True
-
-    def print_msg(self,
-                  msg,
-                  msg_type="INFO",
-                  flush=True,
-                  store=True,
-                  wrap=True):
-        try:
-            raise helios.HeliosException(msg, msg_type)
-        except helios.HeliosException as e:
-            self.process_error(flush, wrap)
-
-    def process_error(self, flush=True, wrap=True):
-        """
-        Process HeliosException exceptions.
-
-        If store=True then the message will be
-        stored internally. To print message use
-        print_unread_messages.
-        If flush=True then all unread messages
-        are printed.
-        """
-        try:
-            msg = ""
-            terminate = 0
-            raise
-        except helios.ElectionPK.CiphertextCheckError as e:
-            msg += self.CiphertextCheckErrorHandler(e)
-        except helios.ElectionPK.ElectionParamsError as e:
-            msg += self.ElectionParamsErrorHandler(e)
-        except helios.Vote.BallotNotWellFormed as e:
-            msg += self.BallotNotWellFormedHandler(e)
-            terminate = 1
-        except helios.Vote.BallotNonMatchingElectionHash as e:
-            msg += self.BallotNonMatchingElectionHashHandler(e)
-        except helios.Vote.BallotNonMatchingElectionUUID as e:
-            msg += self.BallotNonMatchingElectionUUIDHandler(e)
-        except helios.Vote.BallotChallengeReused as e:
-            msg += self.BallotChallengeReusedHandler(e)
-        except helios.EncryptedAnswer.OverallProofMissing as e:
-            msg += self.OverallProofMissingHandler(e)
-        except helios.HeliosDCPProof.DCPWrongNumberOfProofs as e:
-            msg += self.DCPWrongNumberOfProofsHandler(e)
-        except helios.HeliosDCPProof.DCPProofFailed as e:
-            msg += self.DCPProofFailedHandler(e)
-        except helios.HeliosDCPProof.DCPChallengeCheckFailed as e:
-            msg += self.DCPChallengeCheckFailedHandler(e)
-        except helios.Election.VotersHashMissing as e:
-            msg += self.VotersHashMissingHandler(e)
-        except helios.Election.VotersHashCheckError as e:
-            msg += self.VotersHashCheckErrorHandler(e)
-        except helios.Trustee.TrusteeKeyVerificationFailed as e:
-            msg += self.TrusteeKeyVerificationFailedHandler(e)
-        except helios.Trustee.TrusteeDecryptionProofFailed as e:
-            msg += self.TrusteeDecryptionProofFailedHandler(e)
-        except helios.Tally.ResultVerificationFailed as e:
-            msg += self.ResultVerificationFailedHandler(e)
-        except helios.HeliosException as e:
-            msg += self.HeliosExceptionHandler(e)
-
+    def __print(self, msg, wrap=True):
         if wrap is True:
             msg = self.wrapper.fill(msg)
+        self.msg_history.append(msg)
+        tqdm.write(msg)
 
-        self.unread_msgs.append(msg)
+    def info(self, msg, wrap=True):
+        msg = self.info_prefix + msg
+        self.__print(msg, wrap)
 
-        if not self.shutting_down and (
-                self.error_counter >= self.error_thresh or terminate > 0):
-            raise VerifierException(terminate)
+    def warning(self, msg, wrap=True):
+        msg = self.warning_prefix + msg
+        self.warning_counter += 1
+        self.__print(msg, wrap)
 
-        if flush is True:
-            self.print_unread_messages()
+    def error(self, msg, wrap=True):
+        msg = self.error_prefix + msg
+        self.error_counter += 1
+        self.__print(msg, wrap)
+
+    def process_error(self, wrap=True):
+        """
+        Process HeliosException exceptions.
+        """
+        try:
+            raise
+        except helios.ElectionPK.CiphertextCheckError as e:
+            msg = self.CiphertextCheckErrorHandler(e)
+            self.error(msg, wrap)
+        except helios.ElectionPK.ElectionParamsError as e:
+            msg = self.ElectionParamsErrorHandler(e)
+            self.error(msg, wrap)
+        except helios.Vote.BallotNotWellFormed as e:
+            msg = self.BallotNotWellFormedHandler(e)
+            self.error(msg, wrap)
+        except helios.Vote.BallotNonMatchingElectionHash as e:
+            msg = self.BallotNonMatchingElectionHashHandler(e)
+            self.error(msg, wrap)
+        except helios.Vote.BallotNonMatchingElectionUUID as e:
+            msg = self.BallotNonMatchingElectionUUIDHandler(e)
+            self.error(msg, wrap)
+        except helios.Vote.BallotChallengeReused as e:
+            msg = self.BallotChallengeReusedHandler(e)
+            self.error(msg, wrap)
+        except helios.EncryptedAnswer.OverallProofMissing as e:
+            msg = self.OverallProofMissingHandler(e)
+            self.error(msg, wrap)
+        except helios.HeliosDCPProof.DCPWrongNumberOfProofs as e:
+            msg = self.DCPWrongNumberOfProofsHandler(e)
+            self.error(msg, wrap)
+        except helios.HeliosDCPProof.DCPProofFailed as e:
+            msg = self.DCPProofFailedHandler(e)
+            self.error(msg, wrap)
+        except helios.HeliosDCPProof.DCPChallengeCheckFailed as e:
+            msg = self.DCPChallengeCheckFailedHandler(e)
+            self.error(msg, wrap)
+        except helios.Election.VotersHashMissing as e:
+            msg = self.VotersHashMissingHandler(e)
+            self.warning(msg, wrap)
+        except helios.Election.VotersHashCheckError as e:
+            msg = self.VotersHashCheckErrorHandler(e)
+            self.error(msg, wrap)
+        except helios.Trustee.TrusteeKeyVerificationFailed as e:
+            msg = self.TrusteeKeyVerificationFailedHandler(e)
+            self.error(msg, wrap)
+        except helios.Trustee.TrusteeDecryptionProofFailed as e:
+            msg = self.TrusteeDecryptionProofFailedHandler(e)
+            self.error(msg, wrap)
+        except helios.Tally.ResultVerificationFailed as e:
+            msg = self.ResultVerificationFailedHandler(e)
+            self.error(msg, wrap)
 
     def SimpleErrorHandler(self, e):
-        msg = self.error_prefix
-        msg += e.__class__.__name__
+        msg = e.__class__.__name__
         msg += ": Could not verify election!"
-        self.error_counter = self.error_counter + 1
+        if e.message:
+            msg += " Reason: {}".format(e.message)
         return msg
 
     def CiphertextCheckErrorHandler(self, e):
-        msg = self.error_prefix
-        msg += ("Ballot {} could not be verified because ciphertext {} of "
-                "question {} did not pass the membership check. ").format(
-                    Colours.BLUE(e.uuid),
-                    Colours.BLUE(e.choice_num), Colours.BLUE(e.question_num))
-        msg += "Reason: {}".format(Colours.YELLOW(e.message))
-        self.error_counter = self.error_counter + 1
+        msg = ("Ballot {} could not be verified because ciphertext {} of "
+               "question {} did not pass the membership check. ").format(
+                   BLUE(e.uuid), BLUE(e.choice_num), BLUE(e.question_num))
+        msg += "Reason: {}.".format(YELLOW(e.message))
         return msg
 
     def ElectionParamsErrorHandler(self, e):
-        msg = self.error_prefix
-        msg += "Invalid election parameters detected: {}".format(
-            Colours.YELLOW(e.message))
-        self.error_counter = self.error_counter + 1
+        msg = "Invalid election parameters detected: {}".format(
+            YELLOW(e.message))
         return msg
 
     def BallotNotWellFormedHandler(self, e):
-        msg = self.error_prefix
-        msg += "Some components of ballot {} are missing!".format(
-            Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+        msg = "Some components of ballot {} are missing!".format(BLUE(e.uuid))
         return msg
 
     def BallotNonMatchingElectionHashHandler(self, e):
-        msg = self.error_prefix
-        msg += (
-            "The 'election_hash' field of ballot {} and the hash of "
-            "the election object do not match!").format(Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+        msg = ("The 'election_hash' field of ballot {} and the hash of "
+               "the election object do not match!").format(BLUE(e.uuid))
         return msg
 
     def BallotNonMatchingElectionUUIDHandler(self, e):
-        msg = self.error_prefix
-        msg += (
-            "The 'election_uuid' field of ballot {} and the 'uuid' of "
-            "the election object do not match!").format(Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+        msg = ("The 'election_uuid' field of ballot {} and the 'uuid' of "
+               "the election object do not match!").format(BLUE(e.uuid))
         return msg
 
     def BallotChallengeReusedHandler(self, e):
-        msg = self.error_prefix
-        msg += ("A proof challenge of ballot {} has already been used "
-                "in another ballot!").format(Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+        msg = ("A proof challenge of ballot {} has already been used "
+               "in another ballot!").format(BLUE(e.uuid))
         return msg
 
     def OverallProofMissingHandler(self, e):
-        msg = self.error_prefix
-        msg += "Overall proof missing in question {} of ballot {}!".format(
-            Colours.BLUE(e.question_num), Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+        msg = "Overall proof missing in question {} of ballot {}!".format(
+            BLUE(e.question_num), BLUE(e.uuid))
         return msg
 
     def DCPWrongNumberOfProofsHandler(self, e):
-        msg = self.error_prefix
         if e.proof_type is "overall":
-            msg += ("The overall proof for question {} in ballot {} "
-                    "is not complete!").format(
-                        Colours.BLUE(e.question_num), Colours.BLUE(e.uuid))
+            msg = ("The overall proof for question {} in ballot {} "
+                   "is not complete!").format(
+                       BLUE(e.question_num), BLUE(e.uuid))
         else:
-            msg += ("The individual proof for question {} (choice {}) in "
-                    "ballot {} is not complete!").format(
-                        Colours.BLUE(e.question_num),
-                        Colours.BLUE(e.choice_num), Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+            msg = ("The individual proof for question {} (choice {}) in "
+                   "ballot {} is not complete!").format(
+                       BLUE(e.question_num), BLUE(e.choice_num), BLUE(e.uuid))
         return msg
 
     def DCPProofFailedHandler(self, e):
-        msg = self.error_prefix
         if e.proof_type is "overall":
-            msg += ("Could not verify the overall proof for question {} "
-                    "in ballot {}!").format(
-                        Colours.BLUE(e.question_num), Colours.BLUE(e.uuid))
+            msg = ("Could not verify the overall proof for question {} "
+                   "in ballot {}!").format(BLUE(e.question_num), BLUE(e.uuid))
         else:
-            msg += ("Could not verify the individual proof for question "
-                    "{} (choice {}) in ballot {}!").format(
-                        Colours.BLUE(e.question_num),
-                        Colours.BLUE(e.choice_num), Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+            msg = ("Could not verify the individual proof for question "
+                   "{} (choice {}) in ballot {}!").format(
+                       BLUE(e.question_num), BLUE(e.choice_num), BLUE(e.uuid))
         return msg
 
     def DCPChallengeCheckFailedHandler(self, e):
-        msg = self.error_prefix
         if e.proof_type is "overall":
-            msg += ("The challenge sum of the overall proof for question "
-                    "{} in ballot {} is incorrect!").format(
-                        Colours.BLUE(e.question_num), Colours.BLUE(e.uuid))
+            msg = ("The challenge sum of the overall proof for question "
+                   "{} in ballot {} is incorrect!").format(
+                       BLUE(e.question_num), BLUE(e.uuid))
         else:
-            msg += (
+            msg = (
                 "The challenge sum of the individual proof for "
                 "question {} (choice {}) in ballot {} is incorrect!").format(
-                    Colours.BLUE(e.question_num),
-                    Colours.BLUE(e.choice_num), Colours.BLUE(e.uuid))
-        self.error_counter = self.error_counter + 1
+                    BLUE(e.question_num), BLUE(e.choice_num), BLUE(e.uuid))
         return msg
 
     def VotersHashMissingHandler(self, e):
-        msg = self.warning_prefix
-        msg += "Open registration is disabled but voters_hash is null!"
-        self.warning_counter = self.warning_counter + 1
+        msg = "Open registration is disabled but voters_hash is null!"
         return msg
 
     def VotersHashCheckErrorHandler(self, e):
-        msg = self.error_prefix
-        msg += ("The hash of the voter list does not match the"
-                "expected hash in the election object!")
-        self.error_counter = self.error_counter + 1
+        msg = ("The hash of the voter list does not match the"
+               "expected hash in the election object!")
         return msg
 
     def TrusteeKeyVerificationFailedHandler(self, e):
-        msg = self.error_prefix
-        msg += "Could not verify key of trustee!"
-        self.error_counter = self.error_counter + 1
+        msg = "Could not verify key of trustee!"
         return msg
 
     def TrusteeDecryptionProofFailedHandler(self, e):
-        msg = self.error_prefix
-        msg += "Could not verify decryption factor!"
-        self.error_counter = self.error_counter + 1
+        msg = "Could not verify decryption factor!"
         return msg
 
     def ResultVerificationFailedHandler(self, e):
-        msg = self.error_prefix
-        msg += "Result not verified!"
-        self.error_counter = self.error_counter + 1
-        return msg
-
-    def HeliosExceptionHandler(self, e):
-        if e.msg_type == "INFO":
-            msg = self.info_prefix
-            self.info_counter += 1
-        elif e.msg_type == "WARNING":
-            msg = self.warning_prefix
-            self.warning_counter += 1
-        elif e.msg_type == "ERROR":
-            msg = self.error_prefix
-            self.error_counter += 1
-        msg += e.message
+        msg = "Result not verified!"
         return msg
 
 
@@ -319,9 +245,9 @@ class Verifier(object):
         self.uuid = uuid
         self.host = host
         self.election = None
-        self.voters = {}
+        self.voters = {}  # FIXME: convert to list or use voters_uuids_ordered
         self.proof_set = set()
-        self._voters_uuids_ordered = []  # Perhaps I should remove this?
+        self.voters_uuids_ordered = []  # Perhaps I should remove this?
         self.short_ballots = {}
         self.ballots = {}
         self.trustees = {}
@@ -345,11 +271,11 @@ class Verifier(object):
 
     def verify_election_parameters(self):
         print()
-        self.msg_handler.print_msg("Checking election info...")
-        self.msg_handler.print_msg("Election name: " + Colours.BLUE(
-            self.election.name))
-        self.msg_handler.print_msg("Election fingerprint: " + Colours.BLUE(
-            self.election.hash))
+        self.msg_handler.info("Checking election info...")
+        self.msg_handler.info(
+            "Election name: {}".format(BLUE(self.election.name)))
+        self.msg_handler.info(
+            "Election fingerprint: {}".format(BLUE(self.election.hash)))
 
         try:
             self.election.public_key.check_election_params()
@@ -357,28 +283,27 @@ class Verifier(object):
             self.msg_handler.process_error()
 
         try:
-            self.election.verify_voters_hash(self.voters.values())
+            voters = []
+            for uuid in self.voters_uuids_ordered:
+                voters.append(self.voters[uuid])
+            self.election.verify_voters_hash(voters)
         except helios.HeliosException:
             self.msg_handler.process_error()
 
     def verify_all_ballots(self):
         self.tally = helios.Tally(self.election)
         print()
-        self.msg_handler.print_msg("Verifying ballots...")
-        for k, ballot in tqdm(
-                self.ballots.items(), ncols=100, unit=' ballots'):
+        self.msg_handler.info("Verifying ballots...")
+        for k, ballot in tqdm(self.ballots.items(), unit=' ballots'):
             if ballot.vote is not None:
                 try:
                     self.verify_ballot(ballot)
                 except helios.HeliosException as e:
-                    # Do not print message immediately
-                    # Attempt to continue and print the
-                    # errors at the end
-                    self.msg_handler.process_error(flush=False)
+                    self.msg_handler.process_error()
+
                 self.tally.add_vote(ballot)
 
         print()
-        self.msg_handler.print_unread_messages()
 
     def verify_trustee(self, trustee):
         print()
@@ -387,52 +312,50 @@ class Verifier(object):
         except AttributeError:
             email = "undefined"
 
-        self.msg_handler.print_msg("Trustee: {}, uuid: {}".format(
-            Colours.BLUE(email), Colours.BLUE(trustee.uuid)))
+        self.msg_handler.info(
+            "Trustee: {}, uuid: {}".format(BLUE(email), BLUE(trustee.uuid)))
 
         try:
             trustee.verify_secret_key()
-            self.msg_handler.print_msg("Trustee's secret key verified!")
+            self.msg_handler.info("Trustee's secret key verified!")
         except helios.HeliosException as e:
             self.msg_handler.process_error()
 
         try:
             trustee.verify_decryption_proofs(self.tally.tallies)
-            self.msg_handler.print_msg("Decryption proofs verified!")
+            self.msg_handler.info("Decryption proofs verified!")
         except helios.HeliosException as e:
             self.msg_handler.process_error()
 
-        self.tally.add_dec_factors(trustee)
-
     def verify_all_trustees(self):
         print()
-        self.msg_handler.print_msg("Verifying trustees...")
+        self.msg_handler.info("Verifying trustees...")
         calculated_pk = 1
         for k, trustee in self.trustees.items():
             self.verify_trustee(trustee)
             calculated_pk = calculated_pk * trustee.public_key.y
             calculated_pk = calculated_pk % self.election.public_key.p
+            self.tally.add_dec_factors(trustee)
 
         print()
         try:
             if calculated_pk != self.election.public_key.y:
                 raise helios.ElectionPK.ElectionParamsError(
                     "Election public key is not correctly formed!")
-            self.msg_handler.print_msg("Election public key correctly formed!")
+            self.msg_handler.info("Election public key correctly formed!")
         except helios.HeliosException as e:
             self.msg_handler.process_error()
 
     def verify_tally(self):
         print()
-        self.msg_handler.print_msg("Verifying result...")
+        self.msg_handler.info("Verifying result...")
         computed_result = None
         try:
             self.tally.verify_result(self.result)
             computed_result = self.result
-            computed_result[0][0] = 6
             self.print_results(computed_result)
             print()
-            self.msg_handler.print_msg("Results verified!")
+            self.msg_handler.info("Results verified!")
         except helios.HeliosException as e:
             computed_result = self.tally.decrypt_from_factors()
             self.print_results(computed_result)
@@ -440,12 +363,10 @@ class Verifier(object):
             self.msg_handler.process_error()
 
     def print_results(self, computed_result):
-        RED = Colours.RED
         for q_num in range(len(self.election.questions)):
             print()
             question = self.election.questions[q_num]
-            self.msg_handler.print_msg(
-                "QUESTION: {}".format(question["question"]))
+            self.msg_handler.info("QUESTION: {}".format(question["question"]))
             table_data = [["", "Original result", "Computed result"]]
             for c_num in range(len(question["answers"])):
                 answer = question["answers"][c_num]
@@ -457,7 +378,8 @@ class Verifier(object):
                     row = [RED(answer), RED(orig), RED(comp)]
                 table_data.append(row)
             table = SingleTable(table_data)
-            self.msg_handler.print_msg(table.table, wrap=False)
+            table.justify_columns = {1: 'center', 2: 'center'}
+            self.msg_handler.info(table.table, wrap=False)
 
     def verify_election(self):
         finished = 1
@@ -466,27 +388,26 @@ class Verifier(object):
             self.verify_all_ballots()
             self.verify_all_trustees()
             self.verify_tally()
-        except (VerifierException, KeyboardInterrupt) as e:
+        except KeyboardInterrupt as e:
             finished = 0
+        except Exception as e:
+            finished = 0
+            self.msg_handler.error(e.__class__.__name__ + ": {}".format(e))
         finally:
-            self.msg_handler.shutdown()
             print()
             if finished == 1:
-                self.msg_handler.print_msg(
+                self.msg_handler.info(
                     "Verification finished with {} error(s) and {} warning(s)".
                     format(
-                        Colours.RED(self.msg_handler.error_counter),
-                        Colours.YELLOW(self.msg_handler.warning_counter)))
+                        RED(self.msg_handler.error_counter),
+                        YELLOW(self.msg_handler.warning_counter)))
 
                 if self.msg_handler.error_counter > 0:
-                    self.msg_handler.print_msg(
-                        "ELECTION COULD NOT BE VERIFIED!", "ERROR")
+                    self.msg_handler.error("ELECTION COULD NOT BE VERIFIED!")
                 else:
-                    self.msg_handler.print_msg(
-                        "ELECTION VERIFIED SUCCESSFULLY!")
+                    self.msg_handler.info("ELECTION VERIFIED SUCCESSFULLY!")
             else:
-                self.msg_handler.print_msg("VERIFICATION WAS NOT COMPLETED!",
-                                           "ERROR")
+                self.msg_handler.error("VERIFICATION WAS NOT COMPLETED!")
             print()
 
     def fetch_election_info(self, path=None, force_download=False):
@@ -495,7 +416,7 @@ class Verifier(object):
         else:
             election_url = path
 
-        self.msg_handler.print_msg("Downloading election data...")
+        self.msg_handler.info("Downloading election data...")
         election_dct = fetch_json(election_url)
         self.election = helios.Election(election_dct)
 
@@ -507,7 +428,7 @@ class Verifier(object):
         else:
             voters_url = path
 
-        self.msg_handler.print_msg("Downloading voters...")
+        self.msg_handler.info("Downloading voters...")
 
         temp_voters = []
         after = ""
@@ -526,13 +447,12 @@ class Verifier(object):
             after = temp_voters[-1]['uuid']
 
         total_voters = len(temp_voters)
-        self.msg_handler.print_msg(
-            "{} voters found.".format(Colours.BLUE(total_voters)))
+        self.msg_handler.info("{} voters found.".format(BLUE(total_voters)))
 
         # Build a dictionary of voters for quick access
         for voter in temp_voters:
             voter_uuid = voter["uuid"]
-            self._voters_uuids_ordered.append(voter_uuid)
+            self.voters_uuids_ordered.append(voter_uuid)
             self.voters[voter_uuid] = helios.CreateVoter(voter)
 
     def fetch_ballots_info(self, path=None, force_download=False):
@@ -543,9 +463,8 @@ class Verifier(object):
             ballots_url = path
             url_end = ".json"
 
-        self.msg_handler.print_msg("Downloading ballots...")
-        for uuid, voter in tqdm(
-                self.voters.items(), ncols=100, unit=' voters'):
+        self.msg_handler.info("Downloading ballots...")
+        for uuid, voter in tqdm(self.voters.items(), unit=' voters'):
             addr = ballots_url + "/" + uuid + url_end
             ballot = fetch_json(addr)
             self.ballots[voter.uuid] = helios.Ballot(ballot)
@@ -568,7 +487,7 @@ class Verifier(object):
         else:
             trustees_url = path
 
-        self.msg_handler.print_msg("Downloading trustees...")
+        self.msg_handler.info("Downloading trustees...")
         trustees_json = fetch_json(trustees_url)
 
         for trustee in trustees_json:
@@ -619,7 +538,7 @@ class Verifier(object):
     def save_voters_info(self, path):
         """Serialise 'self.voters' and save to file"""
         voters = []
-        for voter_uuid in self._voters_uuids_ordered:
+        for voter_uuid in self.voters_uuids_ordered:
             voter = self.voters[voter_uuid]
             voter_json = voter.toJSONDict()
             voters.append(voter_json)

@@ -5,6 +5,7 @@ from random import randrange
 
 
 def xgcd(a, b):
+    """Extended GCD of (a, b)."""
     rprev, r = a, b
     sprev, s = 1, 0
     tprev, t = 0, 1
@@ -24,7 +25,7 @@ def xgcd(a, b):
 
 
 def modinverse(a, b):
-    '''Find a^(-1) mod b'''
+    """Find a^(-1) mod b."""
     (r, s, t) = xgcd(a, b)
     if r != 1:
         raise ValueError("remainder not equal to 1")
