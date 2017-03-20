@@ -77,7 +77,13 @@ def verify_cp_proof(triple, g, p, q, commitment, challenge, response):
     A = commitment[0]
     B = commitment[1]
 
-    if challenge >= q:
+    if not (1 < challenge < q):
+        return False
+
+    if pow(A, q, p) != 1:
+        return False
+
+    if pow(B, q, p) != 1:
         return False
 
     gresponse = pow(g, response, p)
@@ -95,8 +101,12 @@ def verify_cp_proof(triple, g, p, q, commitment, challenge, response):
 
 def verify_schnorr_proof(X, g, p, q, commitment, challenge, response):
     """Verify knowledge of a discrete logarithm."""
-    if challenge >= q:
+    if not (1 < challenge < q):
         return False
+
+    if pow(commitment, q, p) != 1:
+        return False
+
     gresponse = pow(g, response, p)
     alpha_x_c = (pow(X, challenge, p) * commitment) % p
     if gresponse != alpha_x_c:
