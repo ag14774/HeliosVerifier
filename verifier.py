@@ -579,6 +579,7 @@ class Verifier(object):
         short_ballots_path = None
         ballots_path = None
         trustees_path = None
+        result_path = None
 
         if path is not None and force_download is False:
             path = path.rstrip("/")

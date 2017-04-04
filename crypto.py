@@ -61,9 +61,6 @@ def miller_rabin(n, num_trials=4):
     return True
 
 
-# FIXME: Add check for response too? >= q
-
-
 def verify_cp_proof(triple, g, p, q, commitment, challenge, response):
     """
     Verify knowledge of a Diffie-Hellman triple.
