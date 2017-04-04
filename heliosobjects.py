@@ -616,7 +616,7 @@ class HeliosCPProof(HeliosObject):
         g = public_key.g
         p = public_key.p
         q = public_key.q
-        # QUESTION: Check if proof elements are in group?
+
         try:
             g_2minus_m = HeliosCPProof.PLAINTEXT_INVERSE_CACHE[plaintext]
         except KeyError:

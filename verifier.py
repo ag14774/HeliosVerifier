@@ -1,6 +1,8 @@
 """Helios verifier."""
 import json
+import multiprocessing
 import os
+import signal
 import sys
 import textwrap
 
@@ -95,12 +97,15 @@ class MsgHandler(object):
             self.stop_immediately = False
             raise VerificationError()
 
-    def process_error(self, wrap=True):
+    def process_error(self, wrap=True, exception=None):
         """
         Process HeliosException exceptions.
         """
         try:
-            raise
+            if exception is None:
+                raise
+            else:
+                raise exception
         except helios.ElectionPK.CiphertextCheckError as e:
             msg = self.CiphertextCheckErrorHandler(e)
             self.error(msg, wrap)
@@ -249,6 +254,7 @@ class Verifier(object):
     def __init__(self,
                  uuid,
                  host="https://vote.heliosvoting.org/helios",
+                 cores=1,
                  verbose=False):
         self.uuid = uuid
         self.host = host
@@ -262,6 +268,33 @@ class Verifier(object):
         self.result = None
         self.msg_handler = MsgHandler(verbose)
         self.tally = None
+        self.cores = cores
+
+    def parallel_process(self, array, function, n_jobs=8):
+
+        original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        pool = multiprocessing.Pool(n_jobs)
+        signal.signal(signal.SIGINT, original_sigint_handler)
+
+        out = {}
+        kwargs = {'total': len(array), 'unit': ' ballots', 'leave': True}
+
+        try:
+            for res in tqdm(
+                    pool.imap_unordered(function, array, chunksize=16),
+                    **kwargs):
+                out[res[1].voter_uuid] = res[1]
+                if isinstance(res[0], Exception):
+                    self.msg_handler.process_error(exception=res)
+        except KeyboardInterrupt:
+            pool.terminate()
+            raise
+        else:
+            pool.close()
+        finally:
+            pool.join()
+
+        return out
 
     def verify_ballot_uuid(self, uuid):
         ballot = self.ballots[uuid]
@@ -269,6 +302,9 @@ class Verifier(object):
 
     def verify_ballot(self, ballot):
         ballot.verify(self.election)
+        return self.verify_ballot2(ballot)
+
+    def verify_ballot2(self, ballot):
         proofs = ballot.get_all_hashes()
         proof_set_length = len(self.proof_set)
         expected_proof_set_length = proof_set_length + len(proofs)
@@ -276,6 +312,19 @@ class Verifier(object):
         if len(self.proof_set) != expected_proof_set_length:
             raise helios.Vote.BallotChallengeReused(uuid=ballot.voter_uuid)
         return True
+
+    @staticmethod
+    def verify_ballot3(args):
+        '''Used by parallel_process'''
+        self = args[0]
+        ballot = args[1]
+        if ballot.vote is not None:
+            try:
+                ballot.verify(self.election)
+                return (True, ballot)
+            except helios.HeliosException as e:
+                return (e, ballot)
+        return (None, ballot)
 
     def verify_election_parameters(self):
         print()
@@ -299,18 +348,31 @@ class Verifier(object):
             self.msg_handler.process_error()
 
     def verify_all_ballots(self):
-        self.tally = helios.Tally(self.election)
         print()
         self.msg_handler.info("Verifying ballots...")
-        for k, ballot in tqdm(self.ballots.items(), unit=' ballots'):
-            if ballot.vote is not None:
-                try:
-                    self.verify_ballot(ballot)
-                except helios.HeliosException as e:
-                    self.msg_handler.process_error()
+        self.tally = helios.Tally(self.election)
+        if self.cores == 1:
+            for k, ballot in tqdm(self.ballots.items(), unit=' ballots'):
+                if ballot.vote is not None:
+                    try:
+                        self.verify_ballot(ballot)
+                    except helios.HeliosException as e:
+                        self.msg_handler.process_error()
 
-                self.tally.add_vote(ballot)
-
+                    self.tally.add_vote(ballot)
+        else:
+            selfs = [self] * len(self.ballots.values())
+            out = self.parallel_process(
+                list(zip(selfs, self.ballots.values())), self.verify_ballot3,
+                self.cores)
+            self.ballots = out
+            for k, ballot in self.ballots.items():
+                if ballot.vote is not None:
+                    try:
+                        self.verify_ballot2(ballot)
+                    except helios.HeliosException as e:
+                        self.msg_handler.process_error()
+                    self.tally.add_vote(ballot)
         print()
 
     def verify_trustee(self, trustee):
@@ -631,10 +693,16 @@ if __name__ == "__main__":
         action='store',
         help='location to store files')
     parser.add_argument(
+        '--cores',
+        type=int,
+        default=1,
+        action='store',
+        help='number of cores to use')
+    parser.add_argument(
         '--verbose', action='store_true', help='show progress on screen')
     args = parser.parse_args()
 
-    verifier = Verifier(args.uuid, args.host, args.verbose)
+    verifier = Verifier(args.uuid, args.host, args.cores, args.verbose)
     from_host = verifier.fetch_all_election_data(args.path,
                                                  args.force_download)
     if from_host:
