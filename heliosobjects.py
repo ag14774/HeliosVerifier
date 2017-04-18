@@ -515,7 +515,19 @@ class HeliosDCPProof(HeliosObject):
         self.proofs = []
         for proof in proofs:
             self.proofs.append(HeliosCPProof(proof))
-        self.sha_challenge = 0
+        self._sha_challenge = 0
+
+    @property
+    def sha_challenge(self):
+        if self._sha_challenge > 0:
+            return self._sha_challenge
+        str_to_hash = ""
+        for v, proof in enumerate(self.proofs):
+            # Create string to hash
+            str_to_hash += str(proof.A) + "," + str(proof.B) + ","
+        str_to_hash = str_to_hash[:-1]
+        self._sha_challenge = crypto.int_sha1(str_to_hash)
+        return self._sha_challenge
 
     def toJSONDict(self):
         return [proof.toJSONDict() for proof in self.proofs]
@@ -543,7 +555,7 @@ class HeliosDCPProof(HeliosObject):
 
         # Compute expected challenge
         expected_challenge = crypto.int_sha1(str_to_hash)
-        self.sha_challenge = expected_challenge
+        self._sha_challenge = expected_challenge
 
         res = (expected_challenge == computed_challenge)
         if not res:
