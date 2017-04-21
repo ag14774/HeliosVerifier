@@ -235,9 +235,9 @@ class Verifier(object):
         self.uuid = uuid
         self.host = host
         self.election = None
-        self.voters = {}  # FIXME: convert to list or use voters_uuids_ordered
+        self.voters = {}
         self.proof_set = set()
-        self.voters_uuids_ordered = []  # Perhaps I should remove this?
+        self.voters_uuids_ordered = []
         self.short_ballots = {}
         self.ballots = {}
         self.trustees = {}
@@ -665,7 +665,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--cores',
         type=int,
-        default=1,
+        default=multiprocessing.cpu_count(),
         action='store',
         help='number of cores to use')
     args = parser.parse_args()

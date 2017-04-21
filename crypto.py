@@ -3,6 +3,15 @@ import base64
 import hashlib
 from random import randrange
 
+try:
+    from gmpy2 import mpz
+except Exception:
+    print(("Use of gmpy2 module is strongly recommended."
+           " Please consider installing this module."))
+
+    def mpz(x):
+        return x
+
 
 def xgcd(a, b):
     """Extended GCD of (a, b)."""
@@ -68,28 +77,33 @@ def verify_cp_proof(triple, g, p, q, commitment, challenge, response):
     Use Chaum-Pederson zero-knowledge proof to verify knowledge of
     a Diffie-Hellman triple
     """
-    X = triple[0]
-    Y = triple[1]
-    Z = triple[2]
-    A = commitment[0]
-    B = commitment[1]
+    X = mpz(triple[0])
+    Y = mpz(triple[1])
+    Z = mpz(triple[2])
+    A = mpz(commitment[0])
+    B = mpz(commitment[1])
+    challenge2 = mpz(challenge)
+    g2 = mpz(g)
+    p2 = mpz(p)
+    q2 = mpz(q)
+    response2 = mpz(response)
 
-    if not (1 < challenge < q):
+    if not (1 < challenge2 < q2):
         return False
 
-    if pow(A, q, p) != 1:
+    if pow(A, q2, p2) != 1:
         return False
 
-    if pow(B, q, p) != 1:
+    if pow(B, q2, p2) != 1:
         return False
 
-    gresponse = pow(g, response, p)
-    alpha_y_c = (pow(Y, challenge, p) * A) % p
+    gresponse = pow(g2, response2, p2)
+    alpha_y_c = (pow(Y, challenge2, p2) * A) % p2
     if gresponse != alpha_y_c:
         return False
 
-    xresponse = pow(X, response, p)
-    beta_z_c = (pow(Z, challenge, p) * B) % p
+    xresponse = pow(X, response2, p2)
+    beta_z_c = (pow(Z, challenge2, p2) * B) % p2
     if xresponse != beta_z_c:
         return False
 
