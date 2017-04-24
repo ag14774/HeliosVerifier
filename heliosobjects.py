@@ -3,6 +3,15 @@ import json
 
 import crypto
 
+try:
+    from gmpy2 import mpz
+except Exception:
+    print(("Use of gmpy2 module is strongly recommended."
+           " Please consider installing this module."))
+
+    def mpz(x):
+        return x
+
 
 def all_subclasses(cls, keyattr="__name__"):
     """Return a dictionary of all subclasses of class 'cls' with key 'keyattr'.
@@ -96,8 +105,6 @@ class HeliosObject(object):
         """
         try:
             constructor = HeliosObject.__subdict[arg]
-            # If dct is a list instead of a dictionary
-            # then recursively execute_init
             if (type(dct) == list):
                 return [constructor(x) for x in dct]
             else:
@@ -177,10 +184,10 @@ class ElectionPK(HeliosObject):
         Converts strings to integers before storing them.
         """
         super().__init__(dct)
-        self.g = int(self.g)
-        self.p = int(self.p)
-        self.q = int(self.q)
-        self.y = int(self.y)
+        self.g = mpz(int(self.g))
+        self.p = mpz(int(self.p))
+        self.q = mpz(int(self.q))
+        self.y = mpz(int(self.y))
 
     def toJSONDict(self):
         """Same as in HeliosObject.'toJSONDict'."""
@@ -488,8 +495,8 @@ class ElGamalCiphertext(HeliosObject):
 
     def __init__(self, dct):
         # super().__init__(dct)
-        self.alpha = int(dct["alpha"])
-        self.beta = int(dct["beta"])
+        self.alpha = mpz(int(dct["alpha"]))
+        self.beta = mpz(int(dct["beta"]))
 
     def __mul__(self, other):
         if other == 0 or other == 1:
@@ -611,10 +618,10 @@ class HeliosCPProof(HeliosObject):
 
     def __init__(self, dct):
         self.hash = crypto.b64_sha256(json.dumps(dct))
-        self.challenge = int(dct["challenge"])
-        self.A = int(dct["commitment"]["A"])
-        self.B = int(dct["commitment"]["B"])
-        self.response = int(dct["response"])
+        self.challenge = mpz(int(dct["challenge"]))
+        self.A = mpz(int(dct["commitment"]["A"]))
+        self.B = mpz(int(dct["commitment"]["B"]))
+        self.response = mpz(int(dct["response"]))
 
     def toJSONDict(self):
         out = {}
@@ -667,9 +674,9 @@ class HeliosSchnorrProof(HeliosObject):
 
     def __init__(self, dct):
         self.hash = crypto.b64_sha256(json.dumps(dct))
-        self.challenge = int(dct["challenge"])
-        self.commitment = int(dct["commitment"])
-        self.response = int(dct["response"])
+        self.challenge = mpz(int(dct["challenge"]))
+        self.commitment = mpz(int(dct["commitment"]))
+        self.response = mpz(int(dct["response"]))
 
     def toJSONDict(self):
         out = {}
@@ -703,7 +710,7 @@ class Trustee(HeliosObject):
     def __init__(self, dct):
         self.decryption_factors = []
         for factor_list in dct["decryption_factors"]:
-            temp = [int(x) for x in factor_list]
+            temp = [mpz(int(x)) for x in factor_list]
             self.decryption_factors.append(temp)
 
         self.decryption_proofs = []

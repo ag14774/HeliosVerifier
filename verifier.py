@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import textwrap
+import time
 
 import requests
 from terminaltables import SingleTable
@@ -240,6 +241,7 @@ class Verifier(object):
         self.voters_uuids_ordered = []
         self.short_ballots = {}
         self.ballots = {}
+        self.ballots2 = []
         self.trustees = {}
         self.result = None
         self.msg_handler = MsgHandler()
@@ -276,14 +278,12 @@ class Verifier(object):
     def verify_ballot_parallel(args):
         '''Used by parallel_process'''
         self = args[0]
-        ballot = args[1]
-        if ballot.vote is not None:
-            try:
-                ballot.verify(self.election)
-                return (True, ballot)
-            except helios.HeliosException as e:
-                return (e, ballot)
-        return (None, ballot)
+        ballot = self.ballots[args[1]]
+        try:
+            ballot.verify(self.election)
+            return (True, ballot)
+        except helios.HeliosException as e:
+            return (e, ballot)
 
     def verify_election_parameters(self):
         print()
@@ -310,37 +310,37 @@ class Verifier(object):
         print()
         self.msg_handler.info("Verifying ballots...")
         if self.cores == 1:
-            for k, ballot in tqdm(self.ballots.items(), unit=' ballots'):
-                if ballot.vote is not None:
-                    try:
-                        ballot.verify(self.election)
-                    except helios.HeliosException as e:
-                        self.msg_handler.process_error()
+            for k in tqdm(self.ballots2, unit=' ballots'):
+                ballot = self.ballots[k]
+                try:
+                    ballot.verify(self.election)
+                except helios.HeliosException as e:
+                    self.msg_handler.process_error()
         else:
-            selfs = [self] * len(self.ballots.values())
+            selfs = [self] * len(self.ballots2)
             out = self.parallel_process(
-                list(zip(selfs, self.ballots.values())),
-                self.verify_ballot_parallel, self.cores)
-            self.ballots = out
+                list(zip(selfs, self.ballots2)), self.verify_ballot_parallel,
+                self.cores)
+            self.ballots.update(out)
         print()
 
     def detect_ballot_copying(self):
         print()
         self.msg_handler.info("Searching for related ballots...")
         self.tally = helios.Tally(self.election)
-        for k, ballot in self.ballots.items():
-            if ballot.vote is not None:
-                try:
-                    proofs = ballot.get_all_hashes()
-                    proof_set_length = len(self.proof_set)
-                    expected_proof_set_length = proof_set_length + len(proofs)
-                    self.proof_set = self.proof_set.union(proofs)
-                    if len(self.proof_set) != expected_proof_set_length:
-                        raise helios.Vote.BallotChallengeReused(
-                            uuid=ballot.voter_uuid)
-                except helios.HeliosException as e:
-                    self.msg_handler.process_error()
-                self.tally.add_vote(ballot)
+        for k in self.ballots2:
+            ballot = self.ballots[k]
+            try:
+                proofs = ballot.get_all_hashes()
+                proof_set_length = len(self.proof_set)
+                expected_proof_set_length = proof_set_length + len(proofs)
+                self.proof_set = self.proof_set.union(proofs)
+                if len(self.proof_set) != expected_proof_set_length:
+                    raise helios.Vote.BallotChallengeReused(
+                        uuid=ballot.voter_uuid)
+            except helios.HeliosException as e:
+                self.msg_handler.process_error()
+            self.tally.add_vote(ballot)
         self.msg_handler.info("Search completed!")
 
     def verify_trustee(self, trustee):
@@ -509,6 +509,8 @@ class Verifier(object):
             addr = ballots_url + "/" + uuid + url_end
             ballot = fetch_json(addr)
             self.ballots[voter.uuid] = helios.Ballot(ballot)
+            if self.ballots[voter.uuid].vote:
+                self.ballots2.append(voter.uuid)
 
     def fetch_short_ballots_info(self, path=None, force_download=False):
         if path is None or force_download is True:
@@ -676,4 +678,8 @@ if __name__ == "__main__":
     if from_host:
         verifier.save_all(args.path)
 
+    start_time = time.time()
     verifier.verify_election()
+    elapsed_time = time.time() - start_time
+    print()
+    print("Time elapsed {}".format(elapsed_time))

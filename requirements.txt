@@ -1,3 +1,4 @@
 tqdm
 terminaltables
+requests
 gmpy2
