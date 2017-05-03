@@ -815,9 +815,11 @@ class Tally(HeliosObject):
 
     def decrypt_from_factors(self):
         table = {}
-        for i in range(len(self.vote_fingerprints) + 1):
-            table[pow(self.pk.g, i, self.pk.p)] = i
-
+        temp = mpz(1)
+        table[1] = 0
+        for i in range(1, len(self.vote_fingerprints) + 1):
+            temp = (temp * self.pk.g) % self.pk.p
+            table[temp] = i
         for q_num in range(len(self.result)):
             for c_num in range(len(self.result[q_num])):
                 try:
