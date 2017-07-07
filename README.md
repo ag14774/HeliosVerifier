@@ -1,6 +1,6 @@
 # Yet Another Helios Verifier(YAHV)
 
-The verifier is written in Python and requires a minimum version of *Python v3.6*. The modules tqdm, requests and terminaltables is required to be installed. In addition, the gmpy2 module can lead to significant performance improvements and therefore it is recommended that it is installed.
+The verifier is written in Python and requires a minimum version of *Python v3.6*. The modules ```tqdm```, ```requests``` and ```terminaltables``` are required to be installed. In addition, the ```gmpy2``` module can lead to significant performance improvements and therefore it is recommended that it is installed.
 
 ## Prerequisites
 All modules can be installed with:
